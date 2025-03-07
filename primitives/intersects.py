@@ -1,8 +1,7 @@
 import taichi as ti
-from taichi.math import vec3, normalize, atan2, acos, pi, sqrt, dot
-
+from taichi.math import vec3, normalize, dot
 from primitives.primitives import Primitive
-
+from base.frame import Frame, frame_from_z, create_frame, coordinate_system  # or whichever you prefer.
 
 @ti.dataclass
 class Intersection:
@@ -10,75 +9,60 @@ class Intersection:
     intersected_point: vec3
     normal: vec3
     shading_normal: vec3
-    dpdu: vec3  # Partial derivative of the surface with respect to u
-    dpdv: vec3  # Partial derivative of the surface with respect to v
-    dndu: vec3  # Partial derivative of the normal with respect to u
-    dndv: vec3  # Partial derivative of the normal with respect to v
+    # We remove dpdu/dpdv/dndu/dndv if not needed
     nearest_object: Primitive
     intersected: ti.i32
 
+    # Store the local frame so we don't need partial derivatives
+    frame: Frame
+
     @ti.func
-    def set_intersection(self, ray, prim, tMax):
+    def set_intersection(self, ray, prim, t_hit):
+        # 1) Basic intersection data
         self.intersected = 1
-        self.min_distance = tMax
-        self.intersected_point = ray.origin + self.min_distance * ray.direction
+        self.min_distance = t_hit
+        self.intersected_point = ray.origin + t_hit * ray.direction
         self.nearest_object = prim
-        if prim.shape_type == 0:
-            self.normal = prim.triangle.normal
-            self.calculate_triangle_interaction(prim.triangle)
-        elif prim.shape_type == 1:
-            self.normal = normalize(self.intersected_point - prim.sphere.center)
-            self.calculate_sphere_interaction(prim.sphere)
-        self.shading_normal = self.normal  # flat shading for now
 
+        # 2) Compute geometric normal
+        if prim.shape_type == 0:
+            # Triangles
+            self.normal = prim.triangle.normal
+        elif prim.shape_type == 1:
+            # Sphere
+            center = prim.sphere.center
+            radius = prim.sphere.radius
+            self.normal = normalize((self.intersected_point - center) / radius)
+
+        # (optional) Flip if normal faces away from incoming ray
+        # out_to_in = self.normal.dot(ray.direction) < 0
+        # self.normal = self.normal if out_to_in else -self.normal
+
+        # For flat shading, shading_normal = normal
+        self.shading_normal = self.normal
+
+        self.frame = frame_from_z(normalize(self.shading_normal))
+        # z_axis = normalize(self.shading_normal)
+        # t, b = coordinate_system(z_axis)
+        # self.frame = create_frame(t, b, z_axis)
 
     @ti.func
-    def Le(self, d):
+    def Le(self, d: vec3):
+        """
+        Emission if the object is a light and the direction is front-facing.
+        """
         L = vec3(0.0)
         if self.nearest_object.shape_type == 0 and self.nearest_object.is_light:
-            # Area Light L
-            if dot(self.normal, d) >= 0:
+            # e.g. area light on triangle
+            if dot(self.normal, d) >= 0.0:
                 L += self.nearest_object.material.emission
         return L
-
-
-    @ti.func
-    def calculate_triangle_interaction(self, triangle):
-        self.dpdu = triangle.edge_1  # For flat shading, dpdu could be set to an edge
-        self.dpdv = triangle.edge_2  # Similarly, dpdv could be set to another edge
-
-        # For flat shading, the normal is constant, so derivatives are zero
-        self.dndu = vec3(0.0)
-        self.dndv = vec3(0.0)
-
-
-    @ti.func
-    def calculate_sphere_interaction(self, sphere):
-        pHit = self.intersected_point - sphere.center
-        radius = sphere.radius
-
-        phi = atan2(pHit.y, pHit.x)
-        cosTheta = pHit.z / radius
-        theta = acos(cosTheta)
-
-        u = phi / (2 * pi)
-        v = (theta - (-pi / 2)) / (pi)
-
-        zRadius = sqrt(pHit.x * pHit.x + pHit.y * pHit.y)
-        cosPhi = pHit.x / zRadius if zRadius != 0 else 1.0
-        sinPhi = pHit.y / zRadius if zRadius != 0 else 0.0
-        self.dpdu = vec3(-2 * pi * pHit.y, 2 * pi * pHit.x, 0)
-
-        sinTheta = sqrt(1 - cosTheta * cosTheta)
-        self.dpdv = pi * vec3(pHit.z * cosPhi, pHit.z * sinPhi, -radius * sinTheta)
-
-        self.dndu = vec3(0.0)  # For a perfect sphere, these derivatives are often set to zero
-        self.dndv = vec3(0.0)
 
     @ti.func
     def get_bsdf(self):
         bsdf = self.nearest_object.bsdf
-        bsdf.init_frame(self.shading_normal, self.dpdu)
+        bsdf.frame = self.frame
+
         return bsdf
 
 

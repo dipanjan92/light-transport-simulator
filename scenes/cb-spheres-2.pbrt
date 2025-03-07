@@ -90,17 +90,17 @@ Shape "trianglemesh"
     "point3 P" [ -1 0 1  -1 2 1  -1 2 -1  -1 0 -1 ]
     "integer indices" [ 0 1 2 0 2 3 ]
 
-# Sphere geometry (dielectric)
+# Sphere geometry (conductor)
 AttributeBegin
-    NamedMaterial "Glass"
+    NamedMaterial "Mirror"
     Transform [ 1 0 0 0 0 1 0 0 0 0 1 0 0.3 0.3 0 1 ]  # Adjusted position
     Shape "sphere"
         "float radius" [ 0.3 ]
 AttributeEnd
 
-# Sphere geometry (conductor)
+# Sphere geometry (dielectric)
 AttributeBegin
-    NamedMaterial "Mirror"
+    NamedMaterial "Glass"
     Transform [ 1 0 0 0 0 1 0 0 0 0 1 0 -0.3 0.3 0 1 ]  # Adjusted position
     Shape "sphere"
         "float radius" [ 0.3 ]

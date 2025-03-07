@@ -24,13 +24,13 @@ MakeNamedMaterial "RightWall"
     "rgb reflectance" [ 0.14 0.45 0.091 ]
 MakeNamedMaterial "Floor"
     "string type" [ "diffuse" ]
-    "rgb reflectance" [ 0.725 0.71 0.68 ]
+    "rgb reflectance" [ 0.95 0.95 0.95 ]
 MakeNamedMaterial "Ceiling"
     "string type" [ "diffuse" ]
-    "rgb reflectance" [ 0.725 0.71 0.68 ]
+    "rgb reflectance" [ 0.95 0.95 0.95 ]
 MakeNamedMaterial "BackWall"
     "string type" [ "diffuse" ]
-    "rgb reflectance" [ 0.725 0.71 0.68 ]
+    "rgb reflectance" [ 0.95 0.95 0.95 ]
 MakeNamedMaterial "Light"
     "string type" [ "diffuse" ]
     "rgb reflectance" [ 0 0 0 ]
@@ -41,14 +41,13 @@ MakeNamedMaterial "Glass"
     "float eta" [ 1.5 ]
     "bool remaproughness" [ false ]
 
-# Material for the sphere (conductor)
-MakeNamedMaterial "Mirror"
-    "string type" [ "conductor" ]
-    "float uroughness" [ 0 ]
-    "float vroughness" [ 0 ]
-    "bool remaproughness" [ false ]
-    "rgb k" [ 3.912949 2.452848 2.142188 ]
-    "rgb eta" [ 0.200438 0.924033 1.102212 ]
+MakeNamedMaterial "LeftSphere"
+    "string type" [ "diffuse" ]
+    "rgb reflectance" [ 0.211 0.211 0.211 ]
+
+MakeNamedMaterial "RightSphere"
+    "string type" [ "diffuse" ]
+    "rgb reflectance" [ 0.725 0.71 0.68 ]
 
 # Floor geometry
 NamedMaterial "Floor"
@@ -92,7 +91,7 @@ Shape "trianglemesh"
 
 # Sphere geometry (dielectric)
 AttributeBegin
-    NamedMaterial "Glass"
+    NamedMaterial "RightSphere"
     Transform [ 1 0 0 0 0 1 0 0 0 0 1 0 0.3 0.3 0 1 ]  # Adjusted position
     Shape "sphere"
         "float radius" [ 0.3 ]
@@ -100,7 +99,7 @@ AttributeEnd
 
 # Sphere geometry (conductor)
 AttributeBegin
-    NamedMaterial "Mirror"
+    NamedMaterial "LeftSphere"
     Transform [ 1 0 0 0 0 1 0 0 0 0 1 0 -0.3 0.3 0 1 ]  # Adjusted position
     Shape "sphere"
         "float radius" [ 0.3 ]
@@ -109,7 +108,7 @@ AttributeEnd
 # Area light on the ceiling
 AttributeBegin
     AreaLightSource "diffuse"
-        "rgb L" [ 17 12 4 ]
+        "rgb L" [ 50 50 50 ]
     NamedMaterial "Light"
     Shape "trianglemesh"
         "point2 uv" [ 0 0 1 0 1 1 0 1 ]

@@ -42,10 +42,10 @@ MakeNamedMaterial "Glass"
     "bool remaproughness" [ false ]
 
 # Material for the sphere (conductor)
-MakeNamedMaterial "Mirror"
+MakeNamedMaterial "Metal"
     "string type" [ "conductor" ]
-    "float uroughness" [ 0 ]
-    "float vroughness" [ 0 ]
+    "float vroughness" [ 0.1 ]
+    "float uroughness" [ 0.1 ]
     "bool remaproughness" [ false ]
     "rgb k" [ 3.912949 2.452848 2.142188 ]
     "rgb eta" [ 0.200438 0.924033 1.102212 ]
@@ -100,7 +100,7 @@ AttributeEnd
 
 # Sphere geometry (conductor)
 AttributeBegin
-    NamedMaterial "Mirror"
+    NamedMaterial "Metal"
     Transform [ 1 0 0 0 0 1 0 0 0 0 1 0 -0.3 0.3 0 1 ]  # Adjusted position
     Shape "sphere"
         "float radius" [ 0.3 ]

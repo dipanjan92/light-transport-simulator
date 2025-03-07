@@ -2,7 +2,7 @@ import taichi as ti
 from taichi.math import vec3, vec2, dot, max, isinf
 
 from accelerators.bvh import intersect_bvh, unoccluded
-from base.bsdf import BXDF_SPECULAR, BXDF_REFLECTION, BXDF_TRANSMISSION, BXDF_NONE
+from base.bsdf import BXDF_SPECULAR, BXDF_REFLECTION, BXDF_TRANSMISSION, BXDF_NONE, IMPORTANCE
 from base.lights import uniform_sample_one_light, is_black, power_heuristic
 from primitives.intersects import Intersection
 from primitives.ray import Ray, spawn_ray, offset_ray_origin
@@ -47,9 +47,7 @@ def trace_mis(ray, primitives, bvh, lights, light_sampler, sample_lights=1, samp
                     L += beta * w_l * Le
 
         # Get BSDF
-        bsdf = isect.nearest_object.bsdf
-        bsdf.init_frame(isect.normal, isect.dpdu)
-        # print(bsdf.frame.z)
+        bsdf = isect.get_bsdf()
 
         if bsdf.flags() == BXDF_NONE:
             specular_bounce = True
@@ -91,16 +89,12 @@ def trace_mis(ray, primitives, bvh, lights, light_sampler, sample_lights=1, samp
 
         prev_intr_ctx = isect
 
-        # Spawn the next ray
-        # t_min = 1e-4
-        # ray = Ray(isect.intersected_point, bs.wi)
-
         ray = spawn_ray(isect.intersected_point, isect.normal, bs.wi)
 
 
         # Russian roulette
         rr_beta = beta * eta_scale
-        if rr_beta.max() < 1.0 and depth > 2:
+        if rr_beta.max() < 1.0 and depth > 5:
             q = max(0.0, 1.0 - rr_beta.max())
             if ti.random() < q:
                 break
@@ -131,7 +125,7 @@ def sample_Ld(ray, primitives, bvh, isect, bsdf, light_sampler, lights):
 
     if not is_black(ls.L) and ls.pdf > 0:
         wi = ls.wi
-        f = bsdf.f(-ray.direction, wi, 0) * ti.abs(dot(wi, isect.normal))
+        f = bsdf.f(-ray.direction, wi, IMPORTANCE) * ti.abs(dot(wi, isect.normal))
         if not is_black(f) and unoccluded(ctx_p, isect.normal, ls.intr_p, primitives, bvh, 1e-4):
             p_l = s_l.pdf * ls.pdf
 

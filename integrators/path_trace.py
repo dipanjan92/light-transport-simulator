@@ -42,8 +42,7 @@ def path_trace(ray, primitives, bvh, lights, light_sampler, sample_lights=1, sam
         depth += 1
 
         # Get the BSDF of the intersected object
-        bsdf = isect.nearest_object.bsdf
-        bsdf.init_frame(isect.normal, isect.dpdu)
+        bsdf = isect.get_bsdf()
 
         wo = -ray.direction
 
