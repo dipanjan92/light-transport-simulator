@@ -10,7 +10,7 @@ from utils.constants import INF
 
 
 @ti.func
-def trace_mis(ray, primitives, bvh, lights, light_sampler, sample_lights=1, sample_bsdf=1, max_depth=3):
+def trace_mis(ray, primitives, bvh, lights, light_sampler, rng, sample_lights=1, sample_bsdf=1, max_depth=3):
 
     L = vec3(0.0)
     beta = vec3(1.0)  # Path throughput
@@ -66,14 +66,22 @@ def trace_mis(ray, primitives, bvh, lights, light_sampler, sample_lights=1, samp
 
         # Sample direct illumination
         if bsdf.flags() & BXDF_SPECULAR == 0:
-            Ld = sample_Ld(ray, primitives, bvh, isect, bsdf, light_sampler, lights)
+            Ld = sample_Ld(ray, primitives, bvh, isect, bsdf, light_sampler, lights, rng)
             L += beta * Ld
+
+        # u = 0.0
+        # u2 = vec2(0.0)
+
+        # # Sample BSDF (QMC for specular, RNG for diffuse)
+        # if bsdf.flags() & BXDF_SPECULAR != 0:
+        #     u = sampler.get_1d()
+        #     u2 = sampler.get_2d()  # Stratified
+        # else:
+        u = rng.get_1d()
+        u2 = rng.get_2d()     # Stochastic
 
         # Sample BSDF
         wo = -ray.direction
-
-        u = ti.random()
-        u2 = vec2(ti.random(), ti.random())
         bs = bsdf.sample_f(wo, u, u2)
 
         if is_black(bs.f) or bs.pdf == 0:
@@ -96,7 +104,7 @@ def trace_mis(ray, primitives, bvh, lights, light_sampler, sample_lights=1, samp
         rr_beta = beta * eta_scale
         if rr_beta.max() < 1.0 and depth > 5:
             q = max(0.0, 1.0 - rr_beta.max())
-            if ti.random() < q:
+            if rng.get_1d() < q:
                 break
             beta /= (1.0 - q)
 
@@ -104,7 +112,7 @@ def trace_mis(ray, primitives, bvh, lights, light_sampler, sample_lights=1, samp
 
 
 @ti.func
-def sample_Ld(ray, primitives, bvh, isect, bsdf, light_sampler, lights):
+def sample_Ld(ray, primitives, bvh, isect, bsdf, light_sampler, lights, rng):
     Ld = vec3(0.0)
 
     # Initialize LightSampleContext for light sampling
@@ -117,9 +125,14 @@ def sample_Ld(ray, primitives, bvh, isect, bsdf, light_sampler, lights):
         ctx_p = offset_ray_origin(isect.intersected_point, isect.normal, ray.direction)
 
     # Choose a light source for direct lighting calculation
-    s_l = light_sampler.sample(ti.random())
+    s_l = light_sampler.sample(rng.get_1d())
     sampled_li = lights[s_l.light_idx]
-    u_light = vec2(ti.random(), ti.random())
+    u_light = rng.get_2d()
+    # Light sampling (TODO)
+    # if light.is_area:
+    #     u_light = sampler.get_2d()  # QMC
+    # else:
+    #     u_light = rng.get_2d()      # RNG
     l_shape = primitives[sampled_li.shape_idx].triangle
     ls = sampled_li.sample_Li(ctx_p, u_light, l_shape)
 

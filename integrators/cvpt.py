@@ -78,7 +78,8 @@ def render_control_variate_half(
     primitives_new: ti.template(),
     bvh: ti.template(),
     start_spp: ti.i32,
-    end_spp: ti.i32
+    end_spp: ti.i32,
+    rng: ti.templat()
 ):
     light_sampler = UniformLightSampler(lights.shape[0])
     height, width = camera.height, camera.width
@@ -96,8 +97,8 @@ def render_control_variate_half(
         # c = control_img[j, i]
 
         for s in range(start_spp, end_spp):
-            u = (i + ti.random()) / width
-            v = 1.0 - (j + ti.random()) / height
+            u = (i + rng.uniform_float()) / width
+            v = 1.0 - (j + rng.uniform_float()) / height
 
             # "Old" path (control material):
             ray_org2, ray_dir2 = camera.generate_ray(u, v)

@@ -161,7 +161,7 @@ def reflect(wo: vec3, n: vec3) -> vec3:
 
 
 @ti.func
-def refract(wi: vec3, n: vec3, eta: ti.f32) -> (ti.i32, vec3, ti.f32):
+def refract(wi, n, eta):
 
     cosTheta_i = dot(n, wi)
     local_eta = eta

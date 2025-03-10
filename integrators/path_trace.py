@@ -10,7 +10,7 @@ from utils.constants import INF
 
 
 @ti.func
-def path_trace(ray, primitives, bvh, lights, light_sampler, sample_lights=1, sample_bsdf=1, max_depth=3):
+def path_trace(ray, primitives, bvh, lights, light_sampler, rng, sample_lights=1, sample_bsdf=1, max_depth=3):
     L = vec3(0.0)
     beta = vec3(1.0)
     specular_bounce = 1
@@ -35,7 +35,7 @@ def path_trace(ray, primitives, bvh, lights, light_sampler, sample_lights=1, sam
         # Check if we've reached the maximum recursion depth
         if depth > 4:
             r_r = isect.nearest_object.material.reflectance.max()
-            if ti.random() >= r_r:
+            if rng.get_1d() >= r_r:
                 break
             beta = beta/r_r
 
@@ -49,9 +49,9 @@ def path_trace(ray, primitives, bvh, lights, light_sampler, sample_lights=1, sam
         # direct lighting contribution
         if sample_lights:
             # print("gonna sample")
-            s_l = light_sampler.sample(ti.random())
+            s_l = light_sampler.sample(rng.get_1d())
             sampled_li = lights[s_l.light_idx]
-            u_light = vec2(ti.random(), ti.random())
+            u_light = rng.get_2d()
             l_shape = primitives[sampled_li.shape_idx].triangle
             ls = sampled_li.sample_Li(isect.intersected_point, u_light, l_shape)
 
@@ -64,8 +64,8 @@ def path_trace(ray, primitives, bvh, lights, light_sampler, sample_lights=1, sam
                     L += beta * (f * ls.L / ls.pdf) / s_l.pdf
 
         # BSDF sampling
-        u = ti.random()
-        u2 = vec2(ti.random(), ti.random())
+        u = rng.get_1d()
+        u2 = rng.get_2d()
         bs = bsdf.sample_f(wo, u, u2)
 
         if is_black(bs.f) or bs.pdf == 0:

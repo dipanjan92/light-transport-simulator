@@ -49,19 +49,21 @@ class PerspectiveCamera:
         x = (p_film.x / self.width) * (x_max - x_min) + x_min
         y = (p_film.y / self.height) * (y_max - y_min) + y_min
 
-        return vec3(x, y, -1.0)  # ✅ Ensure -Z film plane (PBRT convention)
+        return vec3(x, y, -1.0)
 
     @ti.func
-    def generate_ray(self, s: ti.f32, t: ti.f32):
+    def generate_ray(self, s: ti.f32, t: ti.f32, rng: ti.template()):
         """Generates a camera ray in world space."""
         p_film = vec3(s * self.width, t * self.height, 0.0)
         p_camera = self.camera_from_raster(p_film)
 
         ray_origin = vec3(0.0, 0.0, 0.0)
-        ray_dir = normalize(p_camera - ray_origin)  # ✅ Ensure correct ray direction
+        ray_dir = normalize(p_camera - ray_origin)
 
         if self.lens_radius > 0:
-            lens_u, lens_v = ti.random(), ti.random()
+            sample2 = rng.get_2d()
+            lens_u = sample2.x
+            lens_v = sample2.y
             p_lens = self.lens_radius * sample_uniform_disk_concentric(lens_u, lens_v)
             ft = self.focal_distance / ti.abs(ray_dir.z)
             p_focus = ray_origin + ft * ray_dir
@@ -74,7 +76,7 @@ class PerspectiveCamera:
         return world_ray_origin, world_ray_dir
 
     @ti.func
-    def generate_ray_differential(self, s: ti.f32, t: ti.f32):
+    def generate_ray_differential(self, s: ti.f32, t: ti.f32, rng: ti.template()):
         """Generates primary ray differentials."""
         p_film = vec3(s * self.width, t * self.height, 0.0)
         p_camera = self.camera_from_raster(p_film)
@@ -89,7 +91,9 @@ class PerspectiveCamera:
 
         # Apply lens-based differentials (if lens_radius > 0)
         if self.lens_radius > 0:
-            lens_u, lens_v = ti.random(), ti.random()
+            sample2 = rng.get_2d()
+            lens_u = sample2.x
+            lens_v = sample2.y
             p_lens = self.lens_radius * sample_uniform_disk_concentric(lens_u, lens_v)
             ft = self.focal_distance / ti.abs(ray_dir.z)
             p_focus = ray_origin + ft * ray_dir
@@ -124,7 +128,7 @@ def frame_look_at(eye, center, up):
     right = normalize(cross(up, forward))
     up_corrected = cross(forward, right)  # Ensure orthonormality
 
-    return create_frame(right, up_corrected, -forward)  # ✅ Flip Z-axis to match PBRT
+    return create_frame(right, up_corrected, -forward)
 
 
 @ti.kernel
