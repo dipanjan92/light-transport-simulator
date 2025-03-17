@@ -1,9 +1,11 @@
-import taichi as ti
-from taichi.math import vec3
+"""
+This module implements a Hierarchical LBVH (HLBVH) accelerator for light transport simulation.
+It provides functions to compute Morton codes for spatial sorting, perform radix sort,
+build LBVH treelets from scene primitives, and merge them using upper-level SAH optimization.
+"""
 
-# ---------------------------------------------------------------------
-# Imports from your existing code (AABB, BVHNode, etc.)
-# ---------------------------------------------------------------------
+import taichi as ti
+from taichi.math import vec3, normalize
 from primitives.aabb import AABB, union, union_p, BVHPrimitive
 from accelerators.bvh import BVHNode
 from utils.constants import INF
@@ -11,11 +13,19 @@ from utils.constants import INF
 
 @ti.dataclass
 class MortonPrimitive:
+    """
+    Represents a primitive along with its Morton code for spatial sorting.
+    """
     prim_idx: ti.i32
     morton_code: ti.u32
 
+
 @ti.dataclass
 class LBVHTreelet:
+    """
+    Represents a LBVH treelet containing a subset of primitives.
+    It stores the starting index, the number of primitives in the treelet, and the starting index for build nodes.
+    """
     start_index: ti.i32
     n_primitives: ti.i32
     build_nodes_start: ti.i32  # index into BVHNode array
@@ -64,6 +74,15 @@ build_upper_sah_centroid = ti.Vector.field(3, dtype=ti.f32, shape=MAX_PRIMS)
 
 @ti.func
 def expand_bits_10(v: ti.u32) -> ti.u32:
+    """
+    Expands a 10-bit integer to 30 bits by interleaving zeros between the bits.
+    
+    Args:
+        v (ti.u32): The 10-bit unsigned integer to expand.
+    
+    Returns:
+        ti.u32: The expanded 30-bit unsigned integer.
+    """
     v64 = ti.u64(v)
     v64 = (v64 * ti.u64(0x00010001)) & ti.u64(0xFF0000FF)
     v64 = (v64 * ti.u64(0x00000101)) & ti.u64(0x0F00F00F)
@@ -71,8 +90,20 @@ def expand_bits_10(v: ti.u32) -> ti.u32:
     v64 = (v64 * ti.u64(0x00000005)) & ti.u64(0x49249249)
     return ti.u32(v64)
 
+
 @ti.func
 def encode_morton3(x: ti.f32, y: ti.f32, z: ti.f32) -> ti.u32:
+    """
+    Encodes 3D coordinates (x, y, z) into a single Morton code using 10-bit precision per axis.
+    
+    Args:
+        x (ti.f32): The x-coordinate.
+        y (ti.f32): The y-coordinate.
+        z (ti.f32): The z-coordinate.
+    
+    Returns:
+        ti.u32: The resulting Morton code.
+    """
     xx = ti.min(ti.max(x, 0.0), 1023.0)
     yy = ti.min(ti.max(y, 0.0), 1023.0)
     zz = ti.min(ti.max(z, 0.0), 1023.0)
@@ -84,11 +115,18 @@ def encode_morton3(x: ti.f32, y: ti.f32, z: ti.f32) -> ti.u32:
 
 @ti.func
 def morton_radix_sort(n: ti.i32):
+    """
+    Sorts the array of MortonPrimitive elements using a radix sort algorithm.
+    
+    Args:
+        n (ti.i32): The number of elements to sort.
+    """
     bits_per_pass = 6
     n_bits = 30
     n_passes = n_bits // bits_per_pass
     bit_mask = (1 << bits_per_pass) - 1
     pass_index = 0
+    # Perform radix sort over multiple passes, processing bits in groups of 6.
     while pass_index < n_passes:
         low_bit = pass_index * bits_per_pass
         for b in range(RADIX_BUCKETS):
@@ -111,8 +149,20 @@ def morton_radix_sort(n: ti.i32):
             morton_prims[i] = morton_prims_temp[i]
         pass_index += 1
 
+
 @ti.func
 def find_interval(n_prims: ti.i32, start_idx: ti.i32, mask: ti.u32) -> ti.i32:
+    """
+    Finds the interval length in the MortonPrimitive array where the Morton code remains constant under a given mask.
+    
+    Args:
+        n_prims (ti.i32): The total number of primitives.
+        start_idx (ti.i32): The starting index in the MortonPrimitive array.
+        mask (ti.u32): The mask to apply to the Morton codes.
+    
+    Returns:
+        ti.i32: The length of the interval where the Morton code is constant.
+    """
     i = 1
     base_code = morton_prims[start_idx].morton_code
     base_val  = base_code & mask
@@ -136,6 +186,24 @@ def check_and_fix_cycle(
     ordered_prims_offset: ti.template(),
     nodes: ti.template()
 ) -> ti.i32:
+    """
+    Checks for cycles in the BVH construction and fixes them by forcing the current node to become a leaf if necessary.
+    
+    Args:
+        cur_node_idx (ti.i32): The current node index.
+        parent_idx (ti.i32): The parent node index.
+        child_idx (ti.i32): The child node index.
+        s_idx (ti.i32): The starting index in the MortonPrimitive array for the current interval.
+        s_count (ti.i32): The number of primitives in the current interval.
+        bvh_primitives: Array of BVH primitive data.
+        primitives: Array of original primitives.
+        ordered_prims: Array to store the re-ordered primitives.
+        ordered_prims_offset: A pointer to the current offset in the ordered_prims array.
+        nodes: Array of BVH nodes.
+    
+    Returns:
+        ti.i32: 1 if a cycle was detected and fixed, 0 otherwise.
+    """
     cyc = 0
     if (child_idx == cur_node_idx) or (child_idx == parent_idx):
         cyc = 1
@@ -168,8 +236,28 @@ def emit_lbvhtreelet(
     stack: ti.template(),
     stack_ptr: ti.template()
 ) -> ti.i32:
+    """
+    Constructs an LBVH treelet by recursively partitioning the primitives based on their Morton codes.
+    
+    Args:
+        start_idx (ti.i32): The starting index of primitives for the treelet.
+        n_prims (ti.i32): The number of primitives in the treelet.
+        bit_index (ti.i32): The current bit index used for partitioning.
+        bvh_primitives: Array of BVH primitive data.
+        primitives: Array of original primitives.
+        ordered_prims: Array to store the re-ordered primitives.
+        total_nodes: A pointer tracking the total number of BVH nodes created.
+        ordered_prims_offset: A pointer to the offset in the ordered_prims array.
+        nodes: Array of BVH nodes.
+        max_prims_in_node: Maximum number of primitives allowed in a leaf node.
+        stack: The build stack used during LBVH treelet construction.
+        stack_ptr: A pointer to the top of the build stack.
+    
+    Returns:
+        ti.i32: The index of the root node of the constructed treelet.
+    """
+    # Initialize the build stack and begin constructing the LBVH treelet.
     stack_ptr[None] = 0
-    # Push initial range.
     stack[stack_ptr[None]][0] = start_idx
     stack[stack_ptr[None]][1] = n_prims
     stack[stack_ptr[None]][2] = bit_index
@@ -241,7 +329,7 @@ def emit_lbvhtreelet(
                             vec3([INF, INF, INF]))
         nodes[cur_node_idx].init_interior(axis, -1, -1, dummy_bounds)
 
-        # Check for cycles. If a cycle is detected, force a leaf.
+        # Check for cycles. If a cycle is detected, force this node to be a leaf.
         if check_and_fix_cycle(cur_node_idx, s_parent, cur_node_idx,
                                s_idx, s_count, bvh_primitives, primitives,
                                ordered_prims, ordered_prims_offset, nodes) == 1:
@@ -297,6 +385,28 @@ def build_upper_sah(
     local_maxp: ti.template(),
     local_centroid: ti.template()
 ) -> ti.i32:
+    """
+    Merges multiple LBVH treelets into a single upper-level BVH using the Surface Area Heuristic (SAH).
+    
+    Args:
+        nodes: Array of BVH nodes.
+        total_nodes: A pointer tracking the total number of nodes created.
+        n_trees (ti.i32): The number of LBVH treelets to merge.
+        max_prims_in_node: Maximum number of primitives allowed in a leaf node.
+        bucket_count: Array to store SAH bucket counts.
+        bucket_bmin: Array to store bucket minimum bounds.
+        bucket_bmax: Array to store bucket maximum bounds.
+        cost_arr: Array to store computed SAH costs.
+        stack: The build stack used during upper-level BVH construction.
+        stack_ptr: A pointer to the top of the build stack.
+        local_root: Array storing the roots of the treelets.
+        local_minp: Array storing the minimum bounds of treelets.
+        local_maxp: Array storing the maximum bounds of treelets.
+        local_centroid: Array storing the centroids of treelets.
+    
+    Returns:
+        ti.i32: The root index of the merged upper-level BVH.
+    """
     res = -1
     if n_trees > 0:
         if n_trees == 1:
@@ -545,6 +655,29 @@ def build_hlbvh(
     max_prims_in_node: ti.template(),
     root_out: ti.template(),
 ):
+    """
+    Builds the complete HLBVH structure by computing Morton codes, sorting primitives, grouping them into treelets,
+    constructing LBVH treelets, and finally merging them using upper-level SAH.
+    
+    Args:
+        primitives: Array of original primitives.
+        bvh_primitives: Array of BVH primitive data.
+        ordered_prims: Array to store re-ordered primitives.
+        n_prims_in (ti.i32): The total number of primitives in the scene.
+        nodes: Array to store the BVH nodes.
+        total_nodes: A pointer tracking the total number of nodes created.
+        ordered_prims_offset: A pointer to the current offset in the ordered_prims array.
+        max_prims_in_node: Maximum number of primitives allowed in a leaf node.
+        root_out: A pointer to store the root index of the final BVH.
+    
+    The kernel performs the following steps:
+        1) Computes centroid bounds.
+        2) Computes Morton codes for each primitive.
+        3) Performs radix sort on Morton codes.
+        4) Groups primitives into LBVH treelets.
+        5) Builds LBVH treelets using emit_lbvhtreelet.
+        6) Merges treelets with build_upper_sah if necessary.
+    """
     # 1) Compute centroid bounds.
     cb_min = vec3([INF, INF, INF])
     cb_max = vec3([-INF, -INF, -INF])
@@ -572,7 +705,7 @@ def build_hlbvh(
     # 3) Radix sort.
     morton_radix_sort(n_morton[None])
 
-    # 4) Group into LBVHTreelets by top bits.
+    # 4) Group into LBVH Treelets by top bits.
     top_bits_mask = 0b00111111111111000000000000000000
     n_treelets[None] = 0
     start = 0

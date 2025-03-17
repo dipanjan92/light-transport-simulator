@@ -1,3 +1,8 @@
+"""
+This module implements a Bounding Volume Hierarchy (BVH) accelerator for light transport simulation.
+It provides classes and functions for building, flattening, and intersecting a BVH from scene primitives.
+"""
+
 import taichi as ti
 from taichi.math import vec3, normalize
 from primitives.aabb import AABB, union, union_p, intersect_bounds
@@ -15,6 +20,11 @@ class BVHNode:
     child_0: ti.i32
     child_1: ti.i32
     split_axis: ti.i32
+
+    """
+    Represents a node in the BVH structure. It can be either a leaf or an interior node.
+    Contains bounding box, primitive offset and count (for leaf nodes), children indices, and split axis (for interior nodes).
+    """
 
     @ti.func
     def init_leaf(self, first, n, box: ti.template()):
@@ -39,16 +49,29 @@ class LinearBVHNode:
     n_primitives: ti.i32
     axis: ti.i32
 
+    """
+    Represents a node in the flattened BVH structure.
+    Contains the bounding box, primitive offset, second child offset, number of primitives (if a leaf), and split axis.
+    """
+
 
 @ti.dataclass
 class BucketInfo:
     count: ti.i32
     bounds: AABB
 
+    """
+    Stores information for a bucket during BVH construction, including the count of primitives and the bounding box of the bucket.
+    """
+
 
 @ti.dataclass
 class Queue:
     item: ti.i32
+
+    """
+    A simple queue data structure used during BVH construction.
+    """
 
 
 @ti.dataclass
@@ -58,9 +81,25 @@ class BuildParams:
     total_nodes: ti.i32
     split_method: ti.i32
 
+    """
+    Contains parameters for building the BVH, including the number of triangles, ordered primitives count,
+    total nodes, and the chosen split method.
+    """
+
 
 @ti.func
 def push(stack, stack_ptr, start, end, parent_idx, is_second_child):
+    """
+    Pushes a new interval onto the BVH build stack.
+
+    Args:
+        stack: The BVH build stack.
+        stack_ptr: A pointer to the current top of the stack.
+        start: The starting index of primitives for this interval.
+        end: The ending index of primitives for this interval.
+        parent_idx: The index of the parent node.
+        is_second_child: Flag indicating if this interval is for the second child.
+    """
     stack[stack_ptr[None], 0] = start
     stack[stack_ptr[None], 1] = end
     stack[stack_ptr[None], 2] = parent_idx
@@ -70,6 +109,12 @@ def push(stack, stack_ptr, start, end, parent_idx, is_second_child):
 
 @ti.func
 def pop(stack, stack_ptr):
+    """
+    Pops the top interval from the BVH build stack.
+
+    Returns:
+        A tuple (start, end, parent_idx, is_second_child) representing the popped interval.
+    """
     stack_ptr[None] -= 1
     start = stack[stack_ptr[None], 0]
     end = stack[stack_ptr[None], 1]
@@ -92,6 +137,28 @@ def build_bvh(primitives: ti.template(),
               ordered_prims_idx: ti.template(),
               costs: ti.template(),
               buckets: ti.template()) -> ti.i32:
+    """
+    Builds the BVH structure for the given scene primitives using a stack-based iterative method.
+    It outputs ordered primitives and constructs BVH nodes based on the specified split method.
+
+    Args:
+        primitives: Array of scene primitives.
+        bvh_primitives: Array containing BVH primitive data (with bounds and primitive indices).
+        _start: Start index for the current BVH build.
+        _end: End index for the current BVH build.
+        ordered_prims: Array to store the primitives in the order determined by the BVH build.
+        nodes: Array to store the BVH nodes.
+        total_nodes: A scalar tracking the total number of nodes created.
+        split_method: The method to use for splitting (e.g., SAH, middle, or equal counts).
+        stack: The build stack used for iterative BVH construction.
+        stack_ptr: A pointer to the top of the stack.
+        ordered_prims_idx: A pointer to the current index in the ordered_prims array.
+        costs: Array to store cost values for SAH splitting.
+        buckets: Array to store bucket information for SAH splitting.
+
+    Returns:
+        int: 0 upon completion.
+    """
     n_boxes = bvh_primitives.shape[0]
     max_prims_in_node = ti.max(4, ti.cast(0.1 * n_boxes, ti.i32))
 
@@ -146,7 +213,6 @@ def build_bvh(primitives: ti.template(),
                     else:
                         mid = partition_sah(bvh_primitives, start, end, dim, centroid_bounds, costs, buckets, bounds, max_prims_in_node)
 
-
                 nodes[current_node_idx].split_axis = dim
                 nodes[current_node_idx].n_primitives = 0
                 nodes[current_node_idx].bounds = bounds
@@ -166,6 +232,19 @@ def flatten_bvh(
     stack: ti.template(),
     stack_top: ti.template()
 ) -> ti.i32:
+    """
+    Flattens the BVH tree into a linear array for efficient traversal during ray intersection tests.
+
+    Args:
+        nodes: Array of BVH nodes from the built tree.
+        linear_bvh: Array to store the flattened BVH nodes.
+        root: The index of the root node in the BVH.
+        stack: A stack used for tree traversal during flattening.
+        stack_top: A pointer to the top of the stack.
+
+    Returns:
+        int: The total number of nodes in the flattened BVH.
+    """
     offset = ti.i32(0)
     stack_top[None] = 1
     stack[0] = ti.Vector([root, -1, 0])  # (node_idx, parent_idx, is_second_child)
@@ -207,6 +286,19 @@ def flatten_bvh(
 
 @ti.func
 def intersect_bvh(ray, primitives, nodes, t_min=0.0, t_max=INF):
+    """
+    Intersects a ray with the BVH structure and returns an Intersection object with hit details.
+
+    Args:
+        ray: The ray to test for intersection.
+        primitives: Array of scene primitives.
+        nodes: Array of BVH nodes.
+        t_min: Minimum t value for valid intersections.
+        t_max: Maximum t value for valid intersections.
+
+    Returns:
+        Intersection: The intersection information of the closest hit, if any.
+    """
     intersection = Intersection()
 
     # Assuming MAX_DEPTH is defined globally or passed as an argument
@@ -259,6 +351,20 @@ def intersect_bvh(ray, primitives, nodes, t_min=0.0, t_max=INF):
 
 @ti.func
 def unoccluded(isec_p, isec_n, target_p, primitives, bvh, shadow_epsilon=0.0001):
+    """
+    Determines if the path between two points is unoccluded by testing for intersections with the BVH.
+
+    Args:
+        isec_p: The starting point of the shadow ray (intersection point).
+        isec_n: The normal at the intersection point.
+        target_p: The target point to test occlusion towards.
+        primitives: Array of scene primitives.
+        bvh: The BVH structure for the scene.
+        shadow_epsilon: A small offset to avoid self-intersections.
+
+    Returns:
+        bool: True if the ray from isec_p to target_p is unoccluded, otherwise False.
+    """
     direction = normalize(target_p - isec_p)
     distance = (target_p - isec_p).norm() * (1-shadow_epsilon)
 
@@ -271,6 +377,18 @@ def unoccluded(isec_p, isec_n, target_p, primitives, bvh, shadow_epsilon=0.0001)
 
 @ti.func
 def partition_equal_counts(bvh_primitives, start, end, dim):
+    """
+    Partitions the BVH primitives into two groups with an equal count based on the centroids along the specified dimension.
+
+    Args:
+        bvh_primitives: Array of BVH primitive data.
+        start: Start index for partitioning.
+        end: End index for partitioning.
+        dim: The dimension (0, 1, or 2) along which to partition based on centroids.
+
+    Returns:
+        int: The index separating the two partitions.
+    """
     mid = (start + end) // 2
     # Sort or partition the primitives based on their centroids along the chosen dimension
     for i in range(start, end):
@@ -285,6 +403,19 @@ def partition_equal_counts(bvh_primitives, start, end, dim):
 
 @ti.func
 def partition_middle(bvh_primitives, start, end, dim, centroid_bounds):
+    """
+    Partitions the BVH primitives by splitting them at the midpoint of their centroids along the specified dimension.
+
+    Args:
+        bvh_primitives: Array of BVH primitive data.
+        start: Start index for partitioning.
+        end: End index for partitioning.
+        dim: The dimension along which to partition.
+        centroid_bounds: The bounding box of the centroids of the primitives.
+
+    Returns:
+        int: The index at which the primitives are partitioned.
+    """
     pmid = (centroid_bounds.min_point[dim] + centroid_bounds.max_point[dim]) / 2
     left, right = start, end - 1
 
@@ -307,6 +438,23 @@ def partition_middle(bvh_primitives, start, end, dim, centroid_bounds):
 
 @ti.func
 def partition_sah(bvh_primitives, start, end, dim, centroid_bounds, costs, buckets, bounds, max_prims_in_node):
+    """
+    Partitions the BVH primitives using the Surface Area Heuristic (SAH) to determine the optimal split.
+
+    Args:
+        bvh_primitives: Array of BVH primitive data.
+        start: Start index for partitioning.
+        end: End index for partitioning.
+        dim: The dimension along which to partition.
+        centroid_bounds: The bounding box of the centroids of the primitives.
+        costs: Array to store cost values for potential splits.
+        buckets: Array to store bucket information for SAH splitting.
+        bounds: The bounding box of the primitives.
+        max_prims_in_node: Maximum number of primitives allowed in a leaf node.
+
+    Returns:
+        int: The partition index (mid) for splitting the primitives.
+    """
     nBuckets = 12
     nSplits = nBuckets - 1
     minCostSplitBucket = -1
