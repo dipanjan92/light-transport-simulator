@@ -10,29 +10,45 @@ from utils.constants import INF
 
 
 @ti.func
-def path_trace(ray, primitives, bvh, lights, light_sampler, rng, sample_lights=1, sample_bsdf=1, max_depth=3):
-    L = vec3(0.0)
-    beta = vec3(1.0)
-    specular_bounce = 1
+def path_trace(ray, primitives, bvh, lights, light_sampler, sample_lights=1, sample_bsdf=1, max_depth=3):
+    """
+    Performs path tracing for light transport simulation.
+
+    Args:
+        ray: The initial ray to trace.
+        primitives: Scene primitives.
+        bvh: Bounding Volume Hierarchy used for acceleration.
+        lights: List of light sources.
+        light_sampler: Sampler for selecting lights.
+        sample_lights: Flag to determine whether to sample direct illumination from lights (default: 1 for True).
+        sample_bsdf: Flag to determine whether to sample the BSDF (default: 1 for True).
+        max_depth: Maximum recursion depth (default: 3).
+
+    Returns:
+        vec3: The accumulated radiance along the ray.
+    """
+    L = vec3(0.0)  # Initialize accumulated radiance
+    beta = vec3(1.0)  # Path throughput (multiplicative factor for radiance)
+    specular_bounce = 1  # Flag to indicate whether the previous bounce was specular
     depth = 0  # Depth of the recursion
-    t_max = INF
-    t_min = 0.0
+    t_max = INF  # Maximum distance for intersection
+    t_min = 0.0  # Minimum distance for intersection
 
     while 1:
         if depth >= max_depth:
             break
 
-        # Intersect the ray with the scene
+        # Intersect the ray with the scene using the BVH
         isect = intersect_bvh(ray, primitives, bvh, t_min, t_max)
 
         if not isect.intersected:
-            # TODO: Environment Light
+            # If no intersection, terminate. TODO: Add environment lighting if available.
             break
 
-        # Accumulate emission (direct light) from the intersected object
+        # Accumulate emitted light from the intersected object
         L += beta * isect.nearest_object.material.emission
 
-        # Check if we've reached the maximum recursion depth
+        # Russian roulette: if depth > 4, probabilistically terminate path based on reflectance
         if depth > 4:
             r_r = isect.nearest_object.material.reflectance.max()
             if rng.get_1d() >= r_r:
@@ -41,43 +57,42 @@ def path_trace(ray, primitives, bvh, lights, light_sampler, rng, sample_lights=1
 
         depth += 1
 
-        # Get the BSDF of the intersected object
+        # Get the BSDF of the intersected object to determine scattering behavior
         bsdf = isect.get_bsdf()
 
-        wo = -ray.direction
+        wo = -ray.direction  # Outgoing direction from the intersection point
 
-        # direct lighting contribution
+        # Direct lighting contribution
         if sample_lights:
-            # print("gonna sample")
-            s_l = light_sampler.sample(rng.get_1d())
+            # Sample a light source using the provided sampler
+            s_l = light_sampler.sample(ti.random())
             sampled_li = lights[s_l.light_idx]
             u_light = rng.get_2d()
             l_shape = primitives[sampled_li.shape_idx].triangle
             ls = sampled_li.sample_Li(isect.intersected_point, u_light, l_shape)
 
+            # If light sample is valid, compute contribution
             if not is_black(ls.L) and ls.pdf > 0:
-                # print("sampling light 001")
+                # Incoming light direction from the light source
                 wi = ls.wi
                 f = bsdf.f(wo, wi) * ti.abs(dot(wi, isect.normal))
                 if not is_black(f) and unoccluded(isect.intersected_point, isect.normal, ls.intr_p, primitives, bvh, 1e-4):
-                    # print("sampling light")
                     L += beta * (f * ls.L / ls.pdf) / s_l.pdf
 
-        # BSDF sampling
-        u = rng.get_1d()
-        u2 = rng.get_2d()
+        # BSDF sampling: sample the BSDF to determine new ray direction
+        u = ti.random()
+        u2 = vec2(ti.random(), ti.random())
         bs = bsdf.sample_f(wo, u, u2)
 
+        # Terminate if BSDF sample is invalid
         if is_black(bs.f) or bs.pdf == 0:
             break
 
+        # Update the path throughput with the BSDF sample
         beta *= bs.f * ti.abs(dot(bs.wi, isect.normal)) / bs.pdf
         specular_bounce = (bs.flags & BXDF_SPECULAR != 0)
         wi = bs.wi
-        # t_min = 1e-4  # Avoid self-intersection by moving the origin slightly
-        # ray = Ray(isect.intersected_point, wi)
+        # Generate a new ray from the intersection point in the sampled direction
         ray = spawn_ray(isect.intersected_point, isect.normal, wi)
 
     return L
-
-

@@ -10,8 +10,26 @@ from utils.constants import INF
 
 
 @ti.func
-def trace_mis(ray, primitives, bvh, lights, light_sampler, rng, sample_lights=1, sample_bsdf=1, max_depth=3):
+def trace_mis(ray, primitives, bvh, lights, light_sampler, sample_lights=1, sample_bsdf=1, max_depth=3):
+    """
+    Performs path tracing using Multiple Importance Sampling (MIS).
 
+    Args:
+        ray: The initial ray to trace.
+        primitives: Scene primitives.
+        bvh: Bounding Volume Hierarchy for acceleration.
+        lights: List of light sources.
+        light_sampler: Sampler for selecting lights.
+        sample_lights: Flag to determine whether to sample direct illumination from lights (default: 1 for True).
+        sample_bsdf: Flag to determine whether to sample the BSDF (default: 1 for True).
+        max_depth: Maximum recursion depth (default: 3).
+
+    Returns:
+        vec3: The computed radiance along the ray.
+    """
+    # Main path tracing loop: intersect the scene, accumulate radiance,
+    # sample BSDF, and apply Russian roulette until termination.
+    
     L = vec3(0.0)
     beta = vec3(1.0)  # Path throughput
     depth = 0  # Depth of the recursion
@@ -112,7 +130,23 @@ def trace_mis(ray, primitives, bvh, lights, light_sampler, rng, sample_lights=1,
 
 
 @ti.func
-def sample_Ld(ray, primitives, bvh, isect, bsdf, light_sampler, lights, rng):
+def sample_Ld(ray, primitives, bvh, isect, bsdf, light_sampler, lights):
+    """
+    Samples direct illumination for a given intersection.
+
+    Args:
+        ray: The incident ray.
+        primitives: Scene primitives.
+        bvh: Bounding Volume Hierarchy for acceleration.
+        isect: Intersection data at the current point.
+        bsdf: Material BSDF at the intersection.
+        light_sampler: Sampler for selecting lights.
+        lights: List of light sources.
+
+    Returns:
+        vec3: The computed direct lighting contribution.
+    """
+    # Adjust the light sampling position based on the BSDF properties (reflection or transmission)
     Ld = vec3(0.0)
 
     # Initialize LightSampleContext for light sampling

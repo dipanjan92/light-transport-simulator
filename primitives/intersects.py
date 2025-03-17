@@ -64,5 +64,3 @@ class Intersection:
         bsdf.frame = self.frame
 
         return bsdf
-
-

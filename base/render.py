@@ -16,41 +16,33 @@ def render(scene: ti.template(), image: ti.template(), lights: ti.template(), ca
     samples_per_pixel = scene.spp
     scale_value = int(ti.max(width, height))
 
-    ti.loop_config(parallelize=8, block_dim=32)  # Adjust for optimal performance
-    for j, i in ti.ndrange(height, width):
-        # Generate a unique seed for this pixel
-        pixel_seed = hash_pixel(ti.Vector([i, j]), base_sobol_sampler.seed[None])
+    if scene.integrator == 0:
+        ti.loop_config(parallelize=4, block_dim=16)
+        for j, i in ti.ndrange(height, width):
+            L = vec3(0.0)
+            for k in range(samples_per_pixel):
+                r_u = ti.random()
+                r_v = ti.random()
+                u = (i + r_u) / width
+                v = 1 - (j + r_v) / height
 
-        # Clone the sampler with a new seed
-        pixel_sampler = base_sobol_sampler.clone()
-        pixel_sampler.seed[None] = pixel_seed
+                ray_origin, ray_direction = camera.generate_ray(u, v)
+                ray = Ray(ray_origin, ray_direction)
+                L += path_trace(ray, primitives, bvh, lights, light_sampler, 
+                                sample_lights=scene.sample_lights, sample_bsdf=scene.sample_bsdf, max_depth=scene.max_depth)
+            image[j, i] = L / samples_per_pixel
+    else:
+        ti.loop_config(parallelize=4, block_dim=16)
+        for j, i in ti.ndrange(height, width):
+            L = vec3(0.0)
+            for k in range(samples_per_pixel):
+                r_u = ti.random()
+                r_v = ti.random()
+                u = (i + r_u) / width
+                v = 1 - (j + r_v) / height
 
-        L = vec3(0.0)
-        for k in range(samples_per_pixel):
-            # Proper initialization per sample
-            pixel_sampler.start_pixel_sample(ti.Vector([i, j]), k, 0)
-
-            # Generate the camera samples after initializing the sampler
-            u_offset = pixel_sampler.get_1d()
-            lens_sample = pixel_sampler.get_2d()
-
-            u = (i + u_offset) / width
-            v = 1.0 - (j + lens_sample[0]) / height
-
-            # Correctly generate ray with valid sampler input
-            ray_origin, ray_direction = camera.generate_ray(u, v, pixel_sampler)
-            ray = Ray(ray_origin, ray_direction)
-
-            # Choose integrator explicitly to avoid ambiguity
-            if scene.integrator == 0:
-                L += path_trace(ray, primitives, bvh, lights, light_sampler, pixel_sampler,
-                               sample_lights=scene.sample_lights,
-                               sample_bsdf=scene.sample_bsdf,
-                               max_depth=scene.max_depth)
-            else:
-                L += trace_mis(ray, primitives, bvh, lights, light_sampler, pixel_sampler,
-                               sample_lights=scene.sample_lights,
-                               sample_bsdf=scene.sample_bsdf,
-                               max_depth=scene.max_depth)
-
-        image[j, i] = L / samples_per_pixel
+                ray_origin, ray_direction = camera.generate_ray(u, v)
+                ray = Ray(ray_origin, ray_direction)
+                L += trace_mis(ray, primitives, bvh, lights, light_sampler,
+                               sample_lights=scene.sample_lights, sample_bsdf=scene.sample_bsdf, max_depth=scene.max_depth)
+            image[j, i] = L / samples_per_pixel
