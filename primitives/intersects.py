@@ -1,3 +1,8 @@
+"""
+This module implements the Intersection class for handling ray-primitive intersections in light transport simulation.
+It provides methods to set intersection details, evaluate emission from light sources, and retrieve BSDF information.
+"""
+
 import taichi as ti
 from taichi.math import vec3, normalize, dot
 from primitives.primitives import Primitive
@@ -5,6 +10,10 @@ from base.frame import Frame, frame_from_z, create_frame, coordinate_system  # o
 
 @ti.dataclass
 class Intersection:
+    """
+    Represents an intersection of a ray with a primitive. Contains details such as the intersection distance,
+    the intersected point, surface and shading normals, and the associated primitive and its local frame.
+    """
     min_distance: ti.f32
     intersected_point: vec3
     normal: vec3
@@ -18,6 +27,14 @@ class Intersection:
 
     @ti.func
     def set_intersection(self, ray, prim, t_hit):
+        """
+        Sets the intersection details for a ray-primitive intersection.
+
+        Args:
+            ray: The ray that intersects the primitive.
+            prim: The primitive that is intersected.
+            t_hit (float): The distance from the ray origin to the intersection point.
+        """
         # 1) Basic intersection data
         self.intersected = 1
         self.min_distance = t_hit
@@ -60,6 +77,12 @@ class Intersection:
 
     @ti.func
     def get_bsdf(self):
+        """
+        Retrieves the BSDF from the intersected primitive and assigns the intersection's local frame to it.
+
+        Returns:
+            The BSDF associated with the intersected primitive.
+        """
         bsdf = self.nearest_object.bsdf
         bsdf.frame = self.frame
 

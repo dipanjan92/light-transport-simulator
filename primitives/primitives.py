@@ -1,3 +1,9 @@
+"""
+This module implements primitive objects for use in light transport simulation in rendering.
+It includes classes for Triangle and Sphere primitives, providing methods for ray intersections,
+area calculations, bounding box retrieval, and uniform sampling. The Primitive class aggregates these
+shapes along with their material, BSDF, and lighting properties.
+"""
 import taichi as ti
 from taichi.math import vec3, cross, dot, sqrt, normalize, vec2, isinf, pi, sin, cos, min, max
 
@@ -10,6 +16,11 @@ from utils.vecmath import spherical_triangle_area, length_squared, distance_squa
 
 @ti.dataclass
 class Triangle:
+    """
+    Represents a triangle primitive with vertices, centroid, normal, and edge vectors.
+    Provides methods for ray-triangle intersection, area calculation, bounding box retrieval,
+    and uniform sampling.
+    """
     vertex_1: vec3
     vertex_2: vec3
     vertex_3: vec3
@@ -20,6 +31,17 @@ class Triangle:
 
     @ti.func
     def intersect(self, ray_o, ray_d, tMax):
+        """
+        Compute the intersection between a ray and the triangle.
+        
+        Args:
+            ray_o (vec3): The origin of the ray.
+            ray_d (vec3): The direction of the ray.
+            tMax (float): The maximum t value to consider for the intersection.
+        
+        Returns:
+            (bool, float): A tuple where the first element indicates if an intersection occurs and the second element is the distance t.
+        """
         p0 = self.vertex_1
         p1 = self.vertex_2
         p2 = self.vertex_3
@@ -94,21 +116,34 @@ class Triangle:
 
     @ti.func
     def get_area(self):
+        """
+        Compute and return the area of the triangle.
+        """
         return 0.5 * cross(self.edge_1, self.edge_2).norm()
 
     @ti.func
     def get_bounds(self):
+        """
+        Compute and return the axis-aligned bounding box of the triangle.
+        Returns a tuple (min_point, max_point).
+        """
         min_p = ti.min(ti.min(self.vertex_1, self.vertex_2), self.vertex_3)
         max_p = ti.max(ti.max(self.vertex_1, self.vertex_2), self.vertex_3)
         return min_p, max_p
 
     @ti.func
     def get_pdf(self):
+        """
+        Compute the probability density function (PDF) value for uniform sampling of the triangle.
+        """
         return 1 / self.get_area()
 
     @ti.func
     def sample(self, u):
-        # Sample point on triangle uniformly by area
+        """
+        Uniformly sample a point on the triangle surface by area and return a ShapeSample.
+        The sample includes the position, normal, and PDF value.
+        """
         b = self.sample_uniform_triangle(u)
         p = b[0] * self.vertex_1 + b[1] * self.vertex_2 + b[2] * self.vertex_3
         n = self.normal
@@ -122,6 +157,10 @@ class Triangle:
 
     @ti.func
     def sample_p(self, p, u):
+        """
+        Sample a point on the triangle relative to a given point p.
+        Adjust the PDF based on the distance and geometric relationship between p and the sample point.
+        """
         result_ss = ShapeSample()
         ss = self.sample(u)
         pdf = ss.pdf
@@ -142,6 +181,9 @@ class Triangle:
 
     @ti.func
     def PDF(self, p, wi):
+        """
+        Compute the PDF value for sampling the triangle from a given point and direction.
+        """
         pdf = 0.0
         ray_origin = p
         ray_direction = wi
@@ -155,6 +197,9 @@ class Triangle:
 
     @ti.func
     def sample_uniform_triangle(self, u):
+        """
+        Generate barycentric coordinates for a uniform random sample on the triangle.
+        """
         b0 = 0.0
         b1 = 0.0
         if u[0] < u[1]:
@@ -167,16 +212,35 @@ class Triangle:
 
     @ti.func
     def solid_angle(self, p):
+        """
+        Compute the solid angle subtended by the triangle from a given point.
+        """
         return spherical_triangle_area(self.vertex_1 - p, self.vertex_2 - p, self.vertex_3 - p)
 
 
 @ti.dataclass
 class Sphere():
+    """
+    Represents a spherical primitive with a center and radius.
+    Provides methods for ray-sphere intersection, area calculation, bounding box retrieval,
+    and uniform sampling of the sphere surface.
+    """
     center: vec3
     radius: ti.f32
 
     @ti.func
     def intersect(self, ray_origin, ray_dir, tMax):
+        """
+        Compute the intersection between a ray and the sphere.
+        
+        Args:
+            ray_origin (vec3): The origin of the ray.
+            ray_dir (vec3): The direction of the ray.
+            tMax (float): The maximum t value to consider for the intersection.
+        
+        Returns:
+            (bool, float): A tuple where the first element indicates if an intersection occurs and the second element is the distance t.
+        """
         oc = ray_origin - self.center
         a = dot(ray_dir, ray_dir)
         b = 2.0 * dot(oc, ray_dir)
@@ -198,21 +262,33 @@ class Sphere():
 
     @ti.func
     def get_bounds(self):
+        """
+        Compute and return the axis-aligned bounding box of the sphere.
+        Returns a tuple (min_point, max_point).
+        """
         min_p = self.center - self.radius
         max_p = self.center + self.radius
         return min_p, max_p
 
     @ti.func
     def get_area(self):
+        """
+        Compute and return the surface area of the sphere.
+        """
         return 4.0 * ti.math.pi * self.radius ** 2
 
     @ti.func
     def get_pdf(self):
+        """
+        Compute the probability density function (PDF) value for uniform sampling of the sphere surface.
+        """
         return 1.0 / self.get_area()
 
     @ti.func
     def sample_uniform_sphere(self, u):
-        """Sample a point uniformly on the surface of a sphere."""
+        """
+        Generate a uniform random sample on the sphere surface using spherical coordinates.
+        """
         z = 1 - 2 * u[0]
         r = ti.sqrt(max(0.0, 1 - z * z))
         phi = 2 * pi * u[1]
@@ -222,7 +298,10 @@ class Sphere():
 
     @ti.func
     def sample(self, u):
-        # Sample point on the sphere uniformly by area
+        """
+        Uniformly sample a point on the sphere surface and return a ShapeSample.
+        The sample includes the position, normal, and PDF value.
+        """
         b = self.sample_uniform_sphere(u)
         p = self.center + b * self.radius
         n = b
@@ -236,6 +315,10 @@ class Sphere():
 
     @ti.func
     def sample_p(self, p, u):
+        """
+        Sample a point on the sphere relative to a given point p.
+        Adjust the PDF based on the distance and geometric relationship between p and the sample point.
+        """
         result_ss = ShapeSample()
         ss = self.sample(u)
         wi = ss.p - p
@@ -254,6 +337,9 @@ class Sphere():
 
     @ti.func
     def PDF(self, p, wi):
+        """
+        Compute the PDF value for sampling the sphere from a given point and direction.
+        """
         pdf = 0
         ray_origin = p
         ray_direction = wi
@@ -268,6 +354,12 @@ class Sphere():
 
 @ti.dataclass
 class Primitive:
+    """
+    Represents a primitive object that can be either a triangle or a sphere, along with its
+    associated material, BSDF, and lighting properties.
+    Provides methods for ray intersection, area calculation, bounding box retrieval, and PDF computation
+    based on the underlying shape type.
+    """
     shape_type: ti.i32
     triangle: Triangle
     sphere: Sphere
@@ -278,6 +370,18 @@ class Primitive:
 
     @ti.func
     def intersect(self, ray_origin, ray_dir, tMax):
+        """
+        Determine the intersection of a ray with the primitive.
+        Delegates to the triangle or sphere intersection method based on the shape type.
+        
+        Args:
+            ray_origin (vec3): The origin of the ray.
+            ray_dir (vec3): The direction of the ray.
+            tMax (float): The maximum t value to consider for the intersection.
+        
+        Returns:
+            (bool, float): A tuple indicating if an intersection occurs and the distance t.
+        """
         hit, t = 0, 0.0
         if self.shape_type == 0:
             hit, t = self.triangle.intersect(ray_origin, ray_dir, tMax)
@@ -287,6 +391,9 @@ class Primitive:
 
     @ti.func
     def get_area(self):
+        """
+        Compute and return the area of the primitive based on its shape type.
+        """
         to_return = 0.0
         if self.shape_type == 0:
             to_return = self.triangle.get_area()
@@ -296,6 +403,10 @@ class Primitive:
 
     @ti.func
     def get_bounds(self):
+        """
+        Compute and return the axis-aligned bounding box of the primitive based on its shape type.
+        Returns a tuple (min_point, max_point).
+        """
         min_p, max_p = vec3(0.0), vec3(0.0)
         if self.shape_type == 0:
             min_p, max_p = self.triangle.get_bounds()
@@ -305,6 +416,9 @@ class Primitive:
 
     @ti.func
     def get_pdf(self):
+        """
+        Compute and return the probability density function (PDF) for sampling the primitive's surface.
+        """
         to_return = 0.0
         if self.shape_type == 0:
             to_return = self.triangle.get_pdf()
