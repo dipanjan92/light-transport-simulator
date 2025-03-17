@@ -1,3 +1,9 @@
+"""
+This module implements light sampling and evaluation for light transport simulation.
+It includes data structures for light samples, area lights, and uniform light sampling,
+and provides functions to estimate direct illumination and power heuristics.
+"""
+
 import taichi as ti
 import math
 
@@ -16,6 +22,10 @@ from utils.vecmath import length_squared, max_component
 
 @ti.dataclass
 class LightLiSample:
+    """
+    Represents a sample for direct illumination from a light source.
+    Contains the emitted radiance L, incoming light direction wi, PDF, and intersection details.
+    """
     L: ti.types.vector(3, ti.f32)
     wi: vec3
     pdf: ti.f32
@@ -25,6 +35,11 @@ class LightLiSample:
 
 @ti.dataclass
 class LightLeSample:
+    """
+    Represents a sample for emitted radiance from a light source.
+    Contains the emitted radiance L, ray origin and direction, intersection position and normal,
+    and PDFs for the position and direction.
+    """
     L: ti.types.vector(3, ti.f32)
     ray_origin: vec3
     ray_dir: vec3
@@ -36,12 +51,19 @@ class LightLeSample:
 
 @ti.dataclass
 class SampledLight:
+    """
+    Represents a light sampling result containing the selected light index and its associated PDF.
+    """
     light_idx: ti.i32
     pdf: ti.f32
 
 
 @ti.dataclass
 class DiffuseAreaLight:
+    """
+    Represents a diffuse area light source defined over a shape.
+    Provides methods to evaluate light emission, sample incident illumination, and compute PDFs.
+    """
     shape_idx: ti.i32
     Le: vec3
     two_sided: ti.i32
@@ -119,6 +141,10 @@ class DiffuseAreaLight:
 
 @ti.dataclass
 class UniformLightSampler:
+    """
+    Provides uniform sampling over a set of lights.
+    Computes the probability mass function (PMF) for selecting a light and returns a sampled light.
+    """
     num_lights: ti.i32
 
     @ti.func
@@ -138,6 +164,22 @@ class UniformLightSampler:
 
 @ti.func
 def uniform_sample_one_light(isect, wo, bsdf, lights, light_sampler, primitives, bvh):
+    """
+    Samples one light uniformly from the available lights and estimates the direct illumination.
+    Divides the estimated light by the sampling PDF.
+
+    Args:
+        isect: Intersection information.
+        wo: Outgoing ray direction.
+        bsdf: BSDF at the intersection.
+        lights: Array of light sources.
+        light_sampler: The light sampler object.
+        primitives: Array of primitives in the scene.
+        bvh: Bounding volume hierarchy for the scene.
+    
+    Returns:
+        vec3: The estimated direct illumination.
+    """
     s_l = light_sampler.sample(ti.random())
     light = lights[s_l.light_idx]
     u_light = vec2(ti.random(), ti.random())
@@ -147,6 +189,25 @@ def uniform_sample_one_light(isect, wo, bsdf, lights, light_sampler, primitives,
 
 @ti.func
 def estimate_direct(isect, wo, bsdf, u_scattering, lights, ls, light_idx, u_light, primitives, bvh):
+    """
+    Estimates the direct illumination at an intersection by sampling a light source.
+    Evaluates the BSDF and checks visibility before accumulating the light contribution.
+    
+    Args:
+        isect: Intersection information.
+        wo: Outgoing ray direction.
+        bsdf: BSDF at the intersection.
+        u_scattering: Random sample for scattering.
+        lights: Array of light sources.
+        ls: Selected light source object.
+        light_idx: Index of the selected light.
+        u_light: Random sample for light sampling.
+        primitives: Array of primitives in the scene.
+        bvh: Bounding volume hierarchy for the scene.
+    
+    Returns:
+        vec3: The estimated direct illumination contribution.
+    """
     Ld = vec3(0.0)
 
     # Sample light source
@@ -166,17 +227,43 @@ def estimate_direct(isect, wo, bsdf, u_scattering, lights, ls, light_idx, u_ligh
 
 @ti.func
 def is_black(v):
+    """
+    Checks if a vector is nearly zero (black).
+    
+    Args:
+        v (vec3): The input vector.
+    
+    Returns:
+        bool: True if the vector is nearly zero in all components, otherwise False.
+    """
     return ti.abs(v[0]) < 1e-6 and ti.abs(v[1]) < 1e-6 and ti.abs(v[2]) < 1e-6
 
 
 @ti.func
 def is_delta_light(light):
-    # Implement this based on your light types
+    """
+    Determines if a light source is a delta light (e.g., a point or directional light).
+    
+    Returns:
+        bool: False by default (modify as needed for your light types).
+    """
     return False  # For now, assume no delta lights
 
 
 @ti.func
 def power_heuristic(nf, f_pdf, ng, g_pdf):
+    """
+    Computes the power heuristic weight for multiple importance sampling.
+    
+    Args:
+        nf: Number of samples from technique f.
+        f_pdf: PDF value for technique f.
+        ng: Number of samples from technique g.
+        g_pdf: PDF value for technique g.
+    
+    Returns:
+        float: The computed weight using the power heuristic.
+    """
     f = nf * f_pdf
     g = ng * g_pdf
     f_sq = f * f
@@ -185,4 +272,3 @@ def power_heuristic(nf, f_pdf, ng, g_pdf):
     if not isinf(f_sq):
         to_return = f_sq / (f_sq + g_sq)
     return to_return
-

@@ -1,11 +1,11 @@
-import taichi as ti
-from taichi.math import pi, vec3, length
-
 """
 Module for material definitions in the light transport simulator.
 
 This module defines the Material class, which encapsulates the physical properties of a material such as reflectance, transmittance, roughness, refractive index (eta), extinction coefficient (k), and emission. These properties are used during light transport and rendering computations.
 """
+
+import taichi as ti
+from taichi.math import pi, vec3, length
 
 from base.bsdf import BSDF
 

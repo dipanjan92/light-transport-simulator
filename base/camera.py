@@ -1,3 +1,8 @@
+"""
+This module implements a PBRT-style perspective camera for light transport simulation.
+It provides functions and a PerspectiveCamera class for generating rays, ray differentials, and camera transformations
+based on scene parameters and film settings.
+"""
 import taichi as ti
 from taichi.math import vec3, vec4, normalize, dot, cross, radians, tan, length, pi
 from base.frame import Frame, create_frame
@@ -7,6 +12,7 @@ from primitives.ray import Ray
 @ti.func
 def sample_uniform_disk_concentric(u, v):
     """Samples a point on a unit disk using concentric mapping."""
+    # Convert uniform random samples in [0,1] to a concentric disk sample for lens simulation.
     u = 2 * u - 1
     v = 2 * v - 1
     p_disk = vec3(0.0, 0.0, 0.0)
@@ -27,7 +33,10 @@ def sample_uniform_disk_concentric(u, v):
 
 @ti.dataclass
 class PerspectiveCamera:
-    """PBRT-style Perspective Camera"""
+    """PBRT-style Perspective Camera for light transport simulation.
+    This camera transforms raster space coordinates to camera space and generates rays in world space.
+    It supports depth of field through lens sampling and computes ray differentials for anti-aliasing.
+    """
     width: ti.i32
     height: ti.i32
     position: vec3
@@ -45,7 +54,7 @@ class PerspectiveCamera:
         """Converts raster space coordinates to camera space."""
         x_min, x_max, y_min, y_max = self.screen_window.x, self.screen_window.y, self.screen_window.z, self.screen_window.w
 
-        # Convert raster space to screen space
+        # Convert raster coordinates to screen space using the defined screen window bounds.
         x = (p_film.x / self.width) * (x_max - x_min) + x_min
         y = (p_film.y / self.height) * (y_max - y_min) + y_min
 
@@ -60,6 +69,7 @@ class PerspectiveCamera:
         ray_origin = vec3(0.0, 0.0, 0.0)
         ray_dir = normalize(p_camera - ray_origin)  # Ensure correct ray direction
 
+        # If lens radius is greater than zero, sample a point on the lens to simulate depth of field.
         if self.lens_radius > 0:
             lens_u, lens_v = ti.random(), ti.random()
             p_lens = self.lens_radius * sample_uniform_disk_concentric(lens_u, lens_v)
@@ -82,7 +92,7 @@ class PerspectiveCamera:
         ray_origin = vec3(0.0, 0.0, 0.0)
         ray_dir = normalize(p_camera - ray_origin)
 
-        # Compute differentials
+        # Compute primary ray differentials for anti-aliasing.
         rx_origin, ry_origin = ray_origin, ray_origin
         rx_direction = normalize(p_camera + self.dx_camera - ray_origin)
         ry_direction = normalize(p_camera + self.dy_camera - ray_origin)
