@@ -1,3 +1,7 @@
+"""
+This module provides parsing utilities for PBRT-V4 scene files.
+It defines functions to tokenize, parse, and post-process PBRT data into structured dictionaries.
+"""
 import re
 from pbrt.lexer import tokenize_file
 
@@ -9,6 +13,19 @@ IDENTITY_4x4 = (
 )
 
 def parse_value(token):
+    """
+    Parse a token into a corresponding Python value.
+    
+    - If enclosed in brackets, convert it to a list of floats (or strings if conversion fails).
+    - If quoted, strip the quotes and return as a string.
+    - Otherwise, attempt to convert it to a float, defaulting to a string if conversion fails.
+    
+    Args:
+        token (str): The input token from PBRT.
+    
+    Returns:
+        Union[str, float, list]: The parsed value.
+    """
     token = token.strip()
     if token.startswith('[') and token.endswith(']'):
         inner = token[1:-1].strip()
@@ -28,8 +45,21 @@ def parse_value(token):
 
 def parse_tokens(tokens):
     """
-    Build a flat list of blocks (each block is a dict with type, optional name,
-    properties, and an optional children list). Supports nested AttributeBegin/End.
+    Convert a sequence of tokens into structured blocks.
+    
+    Each block is a dictionary containing:
+    - 'type': The PBRT directive (e.g., 'Shape', 'Material').
+    - 'name' (optional): The identifier if specified.
+    - 'properties': A dictionary of parameters.
+    - 'children' (optional): Nested attributes if applicable.
+    
+    Supports handling nested AttributeBegin/End blocks.
+    
+    Args:
+        tokens (list): List of tokenized elements.
+    
+    Returns:
+        list: A list of structured blocks.
     """
     idx = 0
     n = len(tokens)
@@ -99,8 +129,16 @@ def parse_tokens(tokens):
 
 def post_process_blocks(blocks):
     """
-    Post-process the block list so that if a NamedMaterial block is immediately followed
-    by one or more Shape blocks, those Shape blocks are attached as children of that NamedMaterial.
+    Organize blocks so that NamedMaterial blocks correctly group associated Shape blocks.
+    
+    If a NamedMaterial block is immediately followed by one or more Shape blocks,
+    those Shape blocks are nested as its children.
+    
+    Args:
+        blocks (list): List of parsed blocks.
+    
+    Returns:
+        list: Processed blocks with proper hierarchy.
     """
     processed = []
     i = 0
@@ -119,6 +157,19 @@ def post_process_blocks(blocks):
     return processed
 
 def pbrt_to_dict(filename):
+    """
+    Convert a PBRT scene file into a structured dictionary representation.
+    
+    - Tokenizes the file.
+    - Parses tokens into structured blocks.
+    - Post-processes blocks into a hierarchical scene structure.
+    
+    Args:
+        filename (str): The path to the PBRT scene file.
+    
+    Returns:
+        dict: A dictionary where keys represent block types and values are lists of corresponding elements.
+    """
     tokens = tokenize_file(filename)
     flat_blocks = parse_tokens(tokens)
     nested = post_process_blocks(flat_blocks)

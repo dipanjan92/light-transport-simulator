@@ -1,3 +1,9 @@
+"""
+This module extracts camera parameters from PBRT-V4 scene descriptions and converts 
+them into a structured representation. It retrieves the transformation matrix, 
+camera position, look-at point, up vector, and field of view (FOV).
+"""
+
 import taichi as ti
 from taichi.math import vec3, normalize
 
@@ -5,7 +11,15 @@ from pbrt.parse_utils import py_normalize
 
 
 def extract_camera_from_scene(scene_dict):
-    """Extracts eye, center, and up from PBRT transformation matrix in scene_dict."""
+    """
+    Extracts camera parameters from a PBRT scene dictionary.
+
+    Args:
+        scene_dict (dict): Dictionary containing parsed PBRT scene data.
+
+    Returns:
+        tuple: (vec3) Camera eye position, (vec3) Look-at point, (vec3) Up vector, (float) Field of view.
+    """
     # Extract the 4×4 transformation matrix
     transform_data = scene_dict["Transform"][0]["properties"]["matrix"]
     camera_data = scene_dict["Camera"][0]["properties"]

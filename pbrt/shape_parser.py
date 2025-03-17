@@ -1,3 +1,9 @@
+"""
+This module parses shape data from PBRT-V4 scene descriptions and converts them into
+Taichi-compatible representations for rendering. It supports triangle meshes and
+spheres, handling transformations, materials, and light sources.
+"""
+
 import taichi as ti
 from taichi.math import vec3
 from pbrt.parse_utils import py_cross, py_normalize, to_vec3, set_matrix, multiply_matrix4
@@ -12,16 +18,22 @@ TRIANGLE_TYPE = 0
 SPHERE_TYPE = 1
 
 
-# -----------------------------------------------------------------------------
-# Helper Functions
-# -----------------------------------------------------------------------------
 def apply_transform(vertices, T):
     """
-    Apply a 4x4 transform T (as a flat tuple of 16 numbers) to a list of vec3 vertices.
+    Applies a 4x4 transformation matrix to a list of 3D vertices.
+
+    Args:
+        vertices (list of vec3): List of vertex positions.
+        T (tuple of float): A flat tuple of 16 numbers representing the 4x4 matrix.
+
+    Returns:
+        list of vec3: Transformed vertex positions.
     """
 
     def transform(v):
+        # Extract x, y, z coordinates from the vertex
         x, y, z = v[0], v[1], v[2]
+        # Apply the transformation matrix to compute new coordinates
         new_x = T[0] * x + T[4] * y + T[8] * z + T[12]
         new_y = T[1] * x + T[5] * y + T[9] * z + T[13]
         new_z = T[2] * x + T[6] * y + T[10] * z + T[14]
@@ -32,9 +44,15 @@ def apply_transform(vertices, T):
 
 def build_triangle(v1, v2, v3, normal_list, idx0, idx1, idx2):
     """
-    Build a Triangle object from three vertices.
-    If per-vertex normals are available, average them to compute the triangle normal;
-    otherwise, compute the cross product of the edges.
+    Constructs a Triangle object from three vertices and optionally per-vertex normals.
+
+    Args:
+        v1, v2, v3 (vec3): Triangle vertex positions.
+        normal_list (list of vec3, optional): Per-vertex normal list.
+        idx0, idx1, idx2 (int): Indices of the triangle vertices.
+
+    Returns:
+        Triangle: A Triangle object with computed centroid, edges, and normal.
     """
     centroid = (v1 + v2 + v3) / 3.0
     edge_1 = v2 - v1
@@ -43,11 +61,13 @@ def build_triangle(v1, v2, v3, normal_list, idx0, idx1, idx2):
         n1 = normal_list[idx0]
         n2 = normal_list[idx1]
         n3 = normal_list[idx2]
+        # Average the normals if available
         avg = vec3((n1[0] + n2[0] + n3[0]) / 3.0,
                    (n1[1] + n2[1] + n3[1]) / 3.0,
                    (n1[2] + n2[2] + n3[2]) / 3.0)
         normal = py_normalize(avg)
     else:
+        # Compute normal using cross product of the edges
         normal = py_normalize(vec3(*py_cross([edge_2[0], edge_2[1], edge_2[2]],
                                              [edge_1[0], edge_1[1], edge_1[2]])))
     return Triangle(
@@ -61,12 +81,19 @@ def build_triangle(v1, v2, v3, normal_list, idx0, idx1, idx2):
     )
 
 
-# -----------------------------------------------------------------------------
-# Create Functions for Specific Shapes
-# -----------------------------------------------------------------------------
 def create_triangle_primitives(shape_data, material, bsdf, is_light, light_idx):
     """
-    Parse a 'trianglemesh' shape and return a list of Primitive objects (one per triangle).
+    Parses a 'trianglemesh' shape and creates a list of Primitive objects.
+
+    Args:
+        shape_data (dict): Shape properties parsed from PBRT file.
+        material (Material): Material associated with the shape.
+        bsdf (BSDF): BSDF model for material interaction.
+        is_light (bool): Whether the shape emits light.
+        light_idx (list of int): Counter tracking light indices.
+
+    Returns:
+        list of Primitive: A list of Primitive objects representing the shape.
     """
     primitives_list = []
     P_val = shape_data["properties"].get("P")
@@ -159,7 +186,18 @@ def create_triangle_primitives(shape_data, material, bsdf, is_light, light_idx):
 
 def create_sphere_primitive(shape_data, material, bsdf, is_light, light_idx, global_transform):
     """
-    Parse a sphere shape and return a Primitive, properly handling transformations.
+    Parses a sphere shape and creates a Primitive object with transformations applied.
+
+    Args:
+        shape_data (dict): Shape properties parsed from PBRT file.
+        material (Material): Material associated with the sphere.
+        bsdf (BSDF): BSDF model for material interaction.
+        is_light (bool): Whether the sphere emits light.
+        light_idx (list of int): Counter tracking light indices.
+        global_transform (tuple of float): Global transformation matrix.
+
+    Returns:
+        Primitive: A Primitive object representing the sphere.
     """
     # Get base radius
     radius = shape_data["properties"].get("radius", [1.0])[0]
@@ -216,8 +254,19 @@ def create_sphere_primitive(shape_data, material, bsdf, is_light, light_idx, glo
     )
 
 
-
 def parse_shapes(shapes_list, materials_list, primitives, global_transform):
+    """
+    Parses a list of shapes and creates primitives with associated materials and transformations.
+
+    Args:
+        shapes_list (list of dict): List of shape descriptions from PBRT.
+        materials_list (list of Material): Available materials in the scene.
+        primitives (dict): Dictionary to store the created primitives.
+        global_transform (tuple of float): Transformation matrix applied globally.
+
+    Returns:
+        tuple: (int) total number of primitives, (int) number of light-emitting shapes.
+    """
     is_light = 0
     light_count = [0]
     global_index = 0  # A running counter for primitives
@@ -260,16 +309,18 @@ def parse_shapes(shapes_list, materials_list, primitives, global_transform):
     return global_index, light_count[0]
 
 
-
 def gather_shapes(blocks, inherited_transform=IDENTITY_4x4, inherited_material=None, inherited_emission=None):
     """
-    Recursively traverse the list of blocks to extract Shape blocks.
-    Each shape gets:
-      - shape_type: from the block’s "name" (e.g. "sphere" or "trianglemesh")
-      - material: inherited from an enclosing NamedMaterial (or None)
-      - transform: the most recent transform in scope (inherited or set locally)
-      - emission: inherited from an enclosing AreaLightSource (if any)
-      - properties: the shape’s own properties
+    Recursively traverses PBRT scene blocks to extract shape descriptions.
+
+    Args:
+        blocks (list of dict): PBRT scene blocks.
+        inherited_transform (tuple of float, optional): Transformation matrix from parent block.
+        inherited_material (str, optional): Material inherited from parent block.
+        inherited_emission (vec3, optional): Emission color inherited from parent block.
+
+    Returns:
+        list of dict: A list of extracted shape descriptions with associated properties.
     """
     shapes = []
     current_transform = inherited_transform
@@ -314,6 +365,15 @@ def gather_shapes(blocks, inherited_transform=IDENTITY_4x4, inherited_material=N
 
 
 def extract_all_shapes(filename):
+    """
+    Extracts all shape data from a PBRT scene file.
+
+    Args:
+        filename (str): Path to the PBRT scene file.
+
+    Returns:
+        list of dict: A list of parsed shape descriptions.
+    """
     scene_dict = pbrt_to_dict(filename)
 
     # Determine the global transform from a top-level Transform directive if it exists.
