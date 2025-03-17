@@ -4,17 +4,16 @@ from base.lights import UniformLightSampler
 from integrators.mis_pt import trace_mis
 from integrators.path_trace import path_trace
 from primitives.ray import Ray
-from samplers.hash import hash_pixel
 
 
 @ti.kernel
 def render(scene: ti.template(), image: ti.template(), lights: ti.template(), camera: ti.template(),
-           primitives: ti.template(), bvh: ti.template(), base_sobol_sampler: ti.template()):
+           primitives: ti.template(), bvh: ti.template()):
     light_sampler = UniformLightSampler(lights.shape[0])
+
     height = camera.height
     width = camera.width
     samples_per_pixel = scene.spp
-    scale_value = int(ti.max(width, height))
 
     if scene.integrator == 0:
         ti.loop_config(parallelize=4, block_dim=16)

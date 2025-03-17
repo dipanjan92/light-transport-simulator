@@ -51,7 +51,7 @@ def path_trace(ray, primitives, bvh, lights, light_sampler, sample_lights=1, sam
         # Russian roulette: if depth > 4, probabilistically terminate path based on reflectance
         if depth > 4:
             r_r = isect.nearest_object.material.reflectance.max()
-            if rng.get_1d() >= r_r:
+            if ti.random() >= r_r:
                 break
             beta = beta/r_r
 
@@ -67,7 +67,7 @@ def path_trace(ray, primitives, bvh, lights, light_sampler, sample_lights=1, sam
             # Sample a light source using the provided sampler
             s_l = light_sampler.sample(ti.random())
             sampled_li = lights[s_l.light_idx]
-            u_light = rng.get_2d()
+            u_light = vec2(ti.random(), ti.random())
             l_shape = primitives[sampled_li.shape_idx].triangle
             ls = sampled_li.sample_Li(isect.intersected_point, u_light, l_shape)
 

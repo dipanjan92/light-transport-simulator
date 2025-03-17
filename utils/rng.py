@@ -1,25 +1,20 @@
 import taichi as ti
 
-@ti.dataclass
+@ti.data_oriented
 class RNG:
-    state_field: ti.u64
+    def __init__(self, seed: ti.i32):
+        # The seed/state is stored as an integer.
+        self.state = seed
 
     @ti.func
-    def next_uint(self) -> ti.u64:
-        # Standard 32-bit LCG logic, but stored in a 64-bit field
-        # We'll mask out only the lower 32 bits.
-        self.state_field = (ti.u64(1664525) * self.state_field + ti.u64(1013904223)) & ti.u64(0xffffffff)
-        return self.state_field
+    def next_uint(self) -> ti.u32:
+        # A simple LCG: state = (a * state + c) mod 2^32.
+        # Constants chosen are similar to those often used.
+        self.state = (1664525 * self.state + 1013904223) & 0xffffffff
+        return self.state
 
     @ti.func
     def uniform_float(self) -> ti.f32:
-        # Convert the 32-bit random integer to a float in [0,1)
+        # Return a float in [0, 1)
         return ti.cast(self.next_uint(), ti.f32) / 4294967296.0
 
-    @ti.func
-    def get_2d(self):
-        return ti.Vector([self.uniform_float(), self.uniform_float()])
-    
-    @ti.func
-    def get_1d(self):
-        return self.uniform_float()

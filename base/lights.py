@@ -137,11 +137,11 @@ class UniformLightSampler:
 
 
 @ti.func
-def uniform_sample_one_light(isect, wo, bsdf, lights, light_sampler, primitives, bvh, rng):
-    s_l = light_sampler.sample(rng.get_1d())
+def uniform_sample_one_light(isect, wo, bsdf, lights, light_sampler, primitives, bvh):
+    s_l = light_sampler.sample(ti.random())
     light = lights[s_l.light_idx]
-    u_light = rng.get_2d()
-    u_scattering = rng.get_2d()
+    u_light = vec2(ti.random(), ti.random())
+    u_scattering = vec2(ti.random(), ti.random())
     L = estimate_direct(isect, wo, bsdf, u_scattering, lights, light, s_l.light_idx, u_light, primitives, bvh)
     return L / s_l.pdf
 

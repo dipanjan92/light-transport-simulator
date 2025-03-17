@@ -18,8 +18,7 @@ class SobolMatrix:
         for i in range(SobolMatrixSize):
             self.sobol_direction_vectors[0, i] = (ti.u32(1) << (31 - i))
 
-        # For dimensions >= 1, compute direction numbers using a simple recurrence to introduce variability
-        # (Note: This is a simplified version compared to PBRT's use of primitive polynomials and precomputed tables.)
+        # Simplified
         for d in range(1, NSobolDimensions):
             # Initialize the first direction number with a value that varies with the dimension
             self.sobol_direction_vectors[d, 0] = (ti.u32(1) << 31) ^ (ti.u32(d) << 24)
@@ -131,12 +130,7 @@ def init_primes(primes: ti.template()):
 
 @ti.func
 def inverse_radical_inverse(base: ti.i32, exponent: ti.i32, offset: ti.u64) -> ti.u64:
-    """
-    Production-quality InverseRadicalInverse:
-    Given an integer 'offset' in the range [0, base^exponent),
-    this function reconstructs the integer n such that:
-        radical_inverse(base, n) = offset / (base^exponent)
-    """
+    
     result = ti.u64(0)
     temp = offset
     # Loop over the number of digits given by 'exponent'
@@ -151,11 +145,7 @@ def inverse_radical_inverse(base: ti.i32, exponent: ti.i32, offset: ti.u64) -> t
 
 @ti.func
 def owen_scrambled_radical_inverse(base: ti.i32, a: ti.u64, seed_val: ti.u32) -> ti.f32:
-    """
-    Production-quality Owen-scrambled Radical Inverse.
-    This function applies an Owen-style per-digit scramble to the radical inverse of 'a' in the given base.
-    It uses a fixed loop count (32 iterations) which is sufficient for our typical exponents.
-    """
+    
     inv_base = 1.0 / ti.cast(base, ti.f32)
     value = 0.0
     inv = inv_base
@@ -188,23 +178,15 @@ def reverse_bits_32(x: ti.u32) -> ti.u32:
 
 @ti.func
 def sobol_permute_bits(a: ti.u64, scramble_seed: ti.u64) -> ti.u64:
-    """
-    Production-quality Binary Permute Scrambler.
-    Mimics PBRT's BinaryPermuteScrambler by XORing the Sobol index with a scramble seed.
-    """
+    
     temp = a ^ scramble_seed
     final_result = temp
     return final_result
 
 @ti.func
 def sobol_fast_owen_bits(a: ti.u64, scramble_seed: ti.u64) -> ti.u64:
-    """
-    Production-quality Fast Owen Scrambler.
-    This function applies a fast Owen-style scramble by reversing the lower 32 bits,
-    applying a series of multiplications and additions based on the scramble seed,
-    and then reversing the bits again.
-    """
-    # We work on the lower 32 bits.
+    
+    # lower 32 bits.
     v = ti.u32(a & ti.u64(0xFFFFFFFF))
     v = reverse_bits_32(v)
     v ^= v * ti.u32(0x3d20adea)
@@ -218,11 +200,7 @@ def sobol_fast_owen_bits(a: ti.u64, scramble_seed: ti.u64) -> ti.u64:
 
 @ti.func
 def sobol_full_owen_bits(a: ti.u64, scramble_seed: ti.u64) -> ti.u64:
-    """
-    Production-quality Full Owen Scrambler.
-    Applies several rounds of mixing (here, 3 rounds) to fully scramble 'a' in a manner
-    similar to PBRT's OwenScrambler. The result is confined to SobolMatrixSize bits.
-    """
+    
     result = a
     for i in range(3):
         mix = ((result << 5) | (result >> (SobolMatrixSize - 5))) & ((ti.u64(1) << SobolMatrixSize) - 1)

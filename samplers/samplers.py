@@ -13,7 +13,7 @@ from samplers.low_discrepancy import (
     sobol_permute_bits
 )
 
-# Constants for randomization strategies (as in PBRT)
+# Constants for randomization strategies
 SOBOL_RANDOMIZE_NONE = 0
 SOBOL_PERMUTE_DIGITS = 1
 SOBOL_FAST_OWEN = 2
@@ -26,7 +26,7 @@ class HaltonSamplerConfig:
         self.max_halton_resolution = max_halton_resolution
         self.max_prime = max_prime
 
-        # Compute base scales and exponents (similar to PBRT)
+        # Compute base scales and exponents
         self.base_scales = [0, 0]
         self.base_exponents = [0, 0]
         for d in range(2):
@@ -64,18 +64,7 @@ class HaltonSampler:
                  randomize_strategy: int, seed: int,
                  dimension_field, halton_index_field, pixel_field, seed_field,
                  i: ti.i32, j: ti.i32):
-        """
-        Production-quality HaltonSampler modeled after PBRT.
-        :param samples_per_pixel: number of samples per pixel
-        :param config: a HaltonSamplerConfig instance with precomputed values
-        :param randomize_strategy: 0: None, 1: PermuteDigits, 2: Owen
-        :param seed: base seed value
-        :param dimension_field: per-pixel dimension field
-        :param halton_index_field: per-pixel halton index field
-        :param pixel_field: per-pixel coordinate field
-        :param seed_field: per-pixel seed field
-        :param i, j: pixel indices (slice indices)
-        """
+        
         self.samples_per_pixel = samples_per_pixel
         self.config = config
         self.randomize = randomize_strategy
@@ -117,7 +106,7 @@ class HaltonSampler:
         sample_stride = self.config.base_scales[0] * self.config.base_scales[1]
         halton_index = ti.u64(0)
         if sample_stride > 1:
-            # Use PBRT’s approach: take pixel coordinate modulo MAX_HALTON_RESOLUTION.
+            # take pixel coordinate modulo MAX_HALTON_RESOLUTION.
             pm0 = p.x % MAX_HALTON_RESOLUTION
             pm1 = p.y % MAX_HALTON_RESOLUTION
             # For dimension 0 (base 2)
@@ -269,12 +258,6 @@ class SobolSampler:
 
     @ti.func
     def sobol_sample(self, a: ti.u64, dimension: ti.i32) -> ti.f32:
-        """
-        The 'raw' expansion of bits is your existing approach:
-            expand 'a' using sobol_direction_vectors[dimension, i].
-        We'll do that in sobol_sample_raw.
-        Then we apply different bit manipulations depending on randomize_strategy.
-        """
         # Single return approach:
         result = ti.f32(0.0)
         scramble_seed = mix_bits(ti.u64(self.seed)) ^ ti.u64(dimension)
