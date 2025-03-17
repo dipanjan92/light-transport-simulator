@@ -5,7 +5,7 @@ from base.bsdf import BSDF
 from base.materials import Material
 from base.samplers import ShapeSample
 from utils.constants import INF
-from utils.misc import spherical_triangle_area, length_squared, distance_squared
+from utils.vecmath import spherical_triangle_area, length_squared, distance_squared
 
 
 @ti.dataclass

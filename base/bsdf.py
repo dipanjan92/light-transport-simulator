@@ -1,9 +1,19 @@
+"""
+This module implements various BSDF and BxDF models for simulating light transport in rendering.
+It includes implementations for diffuse reflection, diffuse transmission, dielectric materials,
+and conductors. These models are based on microfacet theory and are used to evaluate and sample
+the Bidirectional Scattering Distribution Function (BSDF) in a physically-based rendering system.
+"""
+
 import taichi as ti
 from taichi.math import vec3, normalize, dot, cross, sqrt, length, sin, cos, pi, vec2
 
 from base.frame import Frame, frame_from_xz, frame_from_z
-from utils.misc import fresnel
 
+from utils.vecmath import *
+from utils.scattering import *
+from utils.complex import *
+from utils.constants import *
 
 
 # TransportMode
@@ -28,325 +38,19 @@ BXDF_SPECULAR_TRANSMISSION = BXDF_SPECULAR | BXDF_TRANSMISSION
 BXDF_ALL = BXDF_DIFFUSE | BXDF_GLOSSY | BXDF_SPECULAR | BXDF_REFLECTION | BXDF_TRANSMISSION
 
 
-PI     = pi
-INV_PI = 1.0 / PI
-
-@ti.func
-def same_hemisphere(wo: vec3, wi: vec3) -> bool:
-    
-    ret = False
-    if (wo.z * wi.z) > 0.0:
-        ret = True
-    return ret
-
-
-@ti.func
-def cos_theta(w: vec3) -> ti.f32:
-    
-    ret = w.z
-    return ret
-
-
-@ti.func
-def abs_cos_theta(w: vec3) -> ti.f32:
-    
-    ret = ti.abs(w.z)
-    return ret
-
-
-@ti.func
-def sqr(x: ti.f32) -> ti.f32:
-    
-    ret = x * x
-    return ret
-
-
-@ti.func
-def is_inf(x: ti.f32) -> bool:
-    ret = False
-    if ti.abs(x) > 1e30:
-        ret = True
-    return ret
-
-
-@ti.func
-def tan2_theta(w: vec3) -> ti.f32:
-
-    cos2 = w.z * w.z
-    sin2 = ti.max(0.0, 1.0 - cos2)
-    ret = 0.0
-    if cos2 == 0.0:
-        # infinite
-        ret = 1e30
-    else:
-        ret = sin2 / cos2
-    return ret
-
-
-@ti.func
-def cos2_theta(w: vec3) -> ti.f32:
-    
-    ret = w.z * w.z
-    return ret
-
-
-@ti.func
-def cos_phi(w: vec3) -> ti.f32:
-
-    denom = w.x * w.x + w.y * w.y
-    ret = 0.0
-    if denom > 0.0:
-        ret = w.x / sqrt(denom)
-    return ret
-
-
-@ti.func
-def sin_phi(w: vec3) -> ti.f32:
-
-    denom = w.x * w.x + w.y * w.y
-    ret = 0.0
-    if denom > 0.0:
-        ret = w.y / sqrt(denom)
-    return ret
-
-
-@ti.func
-def abs_dot(a: vec3, b: vec3) -> ti.f32:
-    
-    dot_val = a.x * b.x + a.y * b.y + a.z * b.z
-    ret = ti.abs(dot_val)
-    return ret
-
-
-@ti.func
-def clamp(x: ti.f32, low: ti.f32, high: ti.f32) -> ti.f32:
-    
-    ret = x
-    if x < low:
-        ret = low
-    elif x > high:
-        ret = high
-    return ret
-
-
-@ti.func
-def length_squared2(v: vec2) -> ti.f32:
-    
-    ret = v.x * v.x + v.y * v.y
-    return ret
-
-
-@ti.func
-def lerp(t: ti.f32, v1: ti.f32, v2: ti.f32) -> ti.f32:
-    
-    ret = (1.0 - t) * v1 + t * v2
-    return ret
-
-
-@ti.func
-def sample_uniform_disk_polar(u: vec2) -> vec2:
-
-    r = sqrt(u[0])
-    theta = 2.0 * PI * u[1]
-    px = r * cos(theta)
-    py = r * sin(theta)
-    ret = vec2(px, py)
-    return ret
-
-
-@ti.func
-def reflect(wo: vec3, n: vec3) -> vec3:
-    dot_val = dot(wo, n)
-    return -wo + 2.0 * dot_val * n
-
-
-@ti.func
-def refract(wi, n, eta):
-
-    cosTheta_i = dot(n, wi)
-    local_eta = eta
-    local_n = n
-
-    # Potentially flip interface orientation for Snell's law if cosTheta_i < 0.
-    if cosTheta_i < 0.0:
-        local_eta = 1.0 / local_eta
-        cosTheta_i = -cosTheta_i
-        local_n = -local_n
-
-    sin2Theta_i = 1.0 - cosTheta_i * cosTheta_i
-    sin2Theta_i = max(sin2Theta_i, 0.0)
-
-    sin2Theta_t = sin2Theta_i / (local_eta * local_eta)
-
-    valid = 1
-    wt = vec3(0.0, 0.0, 0.0)
-    ret_etap = local_eta
-
-    # Check for total internal reflection.
-    if sin2Theta_t >= 1.0:
-        valid = 0
-    else:
-        cosTheta_t = ti.sqrt(1.0 - sin2Theta_t)
-
-        inv_eta = 1.0 / local_eta
-        wt = (-wi * inv_eta) + (cosTheta_i * inv_eta - cosTheta_t) * local_n
-        wt = wt.normalized()
-
-    return valid, wt, ret_etap
-
-
-@ti.func
-def face_forward(n: vec3, n2: vec3) -> vec3:
-
-    ret = n
-    if dot(n, n2) < 0.0:
-        ret = -n
-    return ret
-
-
-@ti.func
-def fr_dielectric(cos_theta_i: ti.f32, eta: ti.f32) -> ti.f32:
-    # Clamp cosTheta_i to [-1, 1].
-    c = clamp(cos_theta_i, -1.0, 1.0)
-    ret = 0.0  # Final Fresnel reflectance.
-
-    # Potentially flip interface orientation if cosTheta_i < 0.
-    local_eta = eta
-    local_c = c
-    if c < 0.0:
-        local_eta = 1.0 / eta
-        local_c = -c
-
-    sin2_i = 1.0 - (local_c * local_c)
-    sin2_t = sin2_i / (local_eta * local_eta)
-
-    # Check total internal reflection.
-    if sin2_t >= 1.0:
-        ret = 1.0
-    else:
-        # Compute cosTheta_t = sqrt(1 - sin2_t).
-        cos_theta_t = ti.sqrt(1.0 - sin2_t)
-
-        # Fresnel reflection for parallel and perpendicular polarizations.
-        r_parl = (local_eta * local_c - cos_theta_t) / (local_eta * local_c + cos_theta_t)
-        r_perp = (local_c - local_eta * cos_theta_t) / (local_c + local_eta * cos_theta_t)
-
-        # Final reflectance is the average of squared magnitudes.
-        ret = 0.5 * (r_parl * r_parl + r_perp * r_perp)
-
-    return ret
-
-
-@ti.func
-def complex_sqr(z: vec2) -> vec2:
-
-    return vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y)
-
-@ti.func
-def complex_mul(a: vec2, b: vec2) -> vec2:
-    return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x)
-
-@ti.func
-def complex_add(a: vec2, b: vec2) -> vec2:
-    return a + b
-
-@ti.func
-def complex_sub(a: vec2, b: vec2) -> vec2:
-    return a - b
-
-@ti.func
-def complex_conjugate(z: vec2) -> vec2:
-    return vec2(z.x, -z.y)
-
-@ti.func
-def complex_div(a: vec2, b: vec2) -> vec2:
-    denom = b.x * b.x + b.y * b.y
-    ret = vec2(0.0, 0.0)
-    if denom != 0.0:
-        ret = complex_mul(a, complex_conjugate(b)) / denom
-    return ret
-
-@ti.func
-def complex_norm(z: vec2) -> ti.f32:
-    # Returns the squared magnitude
-    return z.x * z.x + z.y * z.y
-
-@ti.func
-def complex_sqrt(z: vec2) -> vec2:
-    # Computes the principal square root of a complex number.
-    mag = sqrt(z.x * z.x + z.y * z.y)
-    real_part = sqrt(0.5 * (mag + z.x))
-    imag_part = sqrt(0.5 * (mag - z.x))
-    if z.y < 0.0:
-        imag_part = -imag_part
-    return vec2(real_part, imag_part)
-
-
-
-
-@ti.func
-def fr_complex_conductor(cosTheta_i: ti.f32, eta: vec2) -> ti.f32:
-
-    c = clamp(cosTheta_i, 0.0, 1.0)
-
-    sin2Theta_i = 1.0 - c * c
-
-    eta_sq = complex_sqr(eta)
-
-    sin2Theta_i_complex = vec2(sin2Theta_i, 0.0)
-    sin2Theta_t = complex_div(sin2Theta_i_complex, eta_sq)
-
-    one_complex = vec2(1.0, 0.0)
-    sub_val = complex_sub(one_complex, sin2Theta_t)
-    cosTheta_t = complex_sqrt(sub_val)
-
-    c_complex = vec2(c, 0.0)
-    eta_times_c = complex_mul(eta, c_complex)
-    num_parl = complex_sub(eta_times_c, cosTheta_t)
-    den_parl = complex_add(eta_times_c, cosTheta_t)
-    r_parl = complex_div(num_parl, den_parl)
-
-    eta_cosTheta_t = complex_mul(eta, cosTheta_t)
-    num_perp = complex_sub(c_complex, eta_cosTheta_t)
-    den_perp = complex_add(c_complex, eta_cosTheta_t)
-    r_perp = complex_div(num_perp, den_perp)
-
-    result = (complex_norm(r_parl) + complex_norm(r_perp)) / 2.0
-    return result
-
-@ti.func
-def fr_complex(cosTheta_i: ti.f32, eta: vec3, k: vec3) -> vec3:
-
-    ret = vec3(0.0)
-    for i in ti.static(range(3)):
-        ret[i] = fr_complex_conductor(cosTheta_i, vec2(eta[i], k[i]))
-    return ret
-
-
-@ti.func
-def sample_cosine_hemisphere(u):
-    
-    r = sqrt(u[0])
-    theta = 2.0 * PI * u[1]
-    x = r * cos(theta)
-    y = r * sin(theta)
-    z = sqrt(ti.max(0.0, 1.0 - x*x - y*y))
-    ret = vec3(x, y, z)
-    return ret
-
-
-@ti.func
-def cosine_hemisphere_pdf(cos_t):
-    
-    ret = 0.0
-    if cos_t > 0.0:
-        ret = cos_t * INV_PI
-    return ret
-
-
 
 @ti.dataclass
 class BSDFSample:
+    """
+    Data class representing a BSDF sample.
+    
+    Attributes:
+        f (vec3): The sampled spectral value (color).
+        wi (vec3): The sampled incident direction.
+        pdf (ti.f32): The probability density of the sample.
+        flags (ti.i32): Flags indicating the type of scattering.
+        eta (ti.f32): The index of refraction at the sample.
+    """
     f:   vec3   # Spectrum or color
     wi:  vec3
     pdf: ti.f32
@@ -356,6 +60,9 @@ class BSDFSample:
 
 @ti.dataclass
 class TrowbridgeReitzDistribution:
+    """
+    Represents the Trowbridge-Reitz microfacet distribution used for modeling rough surface reflection.
+    """
     alpha_x: ti.f32
     alpha_y: ti.f32
 
@@ -496,8 +203,6 @@ class TrowbridgeReitzDistribution:
 
     @ti.func
     def ToString(self) -> ti.i32:
-
-
         return 0
 
     @ti.func
@@ -517,10 +222,26 @@ class TrowbridgeReitzDistribution:
 
 @ti.dataclass
 class DiffuseBxDF:
+    """
+    Represents a diffuse (Lambertian) BRDF for reflection.
+    """
     R: vec3
 
     @ti.func
     def sample_f(self, wo: vec3, uc: ti.f32, u2: vec2, mode: ti.i32, sample_flags: ti.i32) -> BSDFSample:
+        """
+        Samples the BRDF to generate a BSDFSample for diffuse reflection using cosine-weighted hemisphere sampling.
+
+        Args:
+            wo (vec3): Outgoing direction.
+            uc (ti.f32): A random number for branch selection.
+            u2 (vec2): A 2D random sample for hemisphere sampling.
+            mode (ti.i32): Mode flag (e.g., RADIANCE or IMPORTANCE).
+            sample_flags (ti.i32): Flags specifying which components to sample (e.g., reflection).
+
+        Returns:
+            BSDFSample: The sampled BSDF value including spectral value, incident direction, PDF, and flags.
+        """
         # single return
         bs = BSDFSample(vec3(0), vec3(0), 0.0, 0, 1.0)
         canReflect = (sample_flags & BXDF_REFLECTION) != 0
@@ -541,6 +262,17 @@ class DiffuseBxDF:
 
     @ti.func
     def f(self, wo: vec3, wi: vec3, mode: ti.i32) -> vec3:
+        """
+        Computes the diffuse BRDF value for given outgoing and incident directions.
+
+        Args:
+            wo (vec3): Outgoing direction.
+            wi (vec3): Incident direction.
+            mode (ti.i32): Mode flag (e.g., RADIANCE or IMPORTANCE).
+
+        Returns:
+            vec3: The computed BRDF value.
+        """
         fval = vec3(0.0)
         if same_hemisphere(wo, wi):
             fval = self.R * INV_PI
@@ -548,6 +280,18 @@ class DiffuseBxDF:
 
     @ti.func
     def pdf(self, wo: vec3, wi: vec3, mode: ti.i32, sample_flags: ti.i32) -> ti.f32:
+        """
+        Computes the probability density function (PDF) for the diffuse BRDF given outgoing and incident directions.
+
+        Args:
+            wo (vec3): Outgoing direction.
+            wi (vec3): Incident direction.
+            mode (ti.i32): Mode flag.
+            sample_flags (ti.i32): Flags indicating which components are being sampled.
+
+        Returns:
+            ti.f32: The probability density of the sample.
+        """
         pdfv = 0.0
         canReflect = (sample_flags & BXDF_REFLECTION) != 0
         if canReflect and same_hemisphere(wo, wi):
@@ -556,6 +300,12 @@ class DiffuseBxDF:
 
     @ti.func
     def flags(self) -> ti.i32:
+        """
+        Returns the BxDF flags for the diffuse BRDF based on its reflectance properties.
+
+        Returns:
+            ti.i32: A flag indicating that the BRDF is diffuse and reflective.
+        """
 
         flag_val = 0
         # If R has any non-zero component
@@ -567,14 +317,32 @@ class DiffuseBxDF:
 
 @ti.dataclass
 class DiffuseTransmissionBxDF:
+    """
+    Represents a diffuse transmission BxDF that models both reflection and transmission in diffuse surfaces.
+    This class uses reflectance (R) and transmittance (T) properties to probabilistically sample either a reflection or transmission event.
+    """
     R: vec3
     T: vec3
 
     @ti.func
     def sample_f(self, wo: vec3, uc: ti.f32, u2: vec2, mode: ti.i32, sample_flags: ti.i32) -> BSDFSample:
-        # single return
+        """
+        Samples the BSDF for diffuse transmission by choosing between reflection and transmission based on the maximum values of R and T.
+        The method uses a random number (uc) to decide the branch and returns a BSDFSample with the appropriate parameters.
+        
+        Args:
+            wo (vec3): Outgoing direction.
+            uc (ti.f32): A random number for branch selection.
+            u2 (vec2): A 2D random sample used for hemisphere sampling.
+            mode (ti.i32): Mode flag indicating the transport mode.
+            sample_flags (ti.i32): Flags specifying allowed scattering components.
+        
+        Returns:
+            BSDFSample: The resulting sample containing the spectral value, incoming direction, PDF, and flags.
+        """
+        # Create a default BSDFSample with zeroed values.
         bs = BSDFSample(vec3(0), vec3(0), 0.0, 0, 1.0)
-        # get reflection or transmission "max" to pick
+        # Determine the maximum reflectance and transmittance values from R and T.
         pr = self.R.max()
         pt = self.T.max()
         refOk = (sample_flags & BXDF_REFLECTION) != 0
@@ -585,38 +353,52 @@ class DiffuseTransmissionBxDF:
             pt = 0.0
         sump = pr + pt
         if sump > 0.0:
-            # pick reflection or transmission
+            # Probabilistically select between reflection (branch 1) and transmission (branch 2) based on the ratio of pr to pt.
             branch = 0
             if uc < pr/sump:
                 branch = 1
             else:
                 branch = 2
             if branch == 1:
-                # reflection
+                # Reflection branch:
+                # Sample a cosine-weighted hemisphere for reflection. Adjust the sign of wi.z based on wo.z.
                 wi = sample_cosine_hemisphere(u2)
                 if wo.z < 0.0:
                     wi.z = -wi.z
                 pdfv = cosine_hemisphere_pdf(ti.abs(wi.z)) * (pr / sump)
                 fval = self.f(wo, wi, mode)
-                bs.f   = fval
-                bs.wi  = wi
+                bs.f = fval
+                bs.wi = wi
                 bs.pdf = pdfv
                 bs.flags = (BXDF_DIFFUSE | BXDF_REFLECTION)
             else:
-                # transmission
+                # Transmission branch:
+                # Sample a cosine-weighted hemisphere for transmission. Invert wi.z if necessary for proper transmission direction.
                 wi = sample_cosine_hemisphere(u2)
                 if wo.z > 0.0:
                     wi.z = -wi.z
                 pdfv = cosine_hemisphere_pdf(ti.abs(wi.z)) * (pt / sump)
                 fval = self.f(wo, wi, mode)
-                bs.f   = fval
-                bs.wi  = wi
+                bs.f = fval
+                bs.wi = wi
                 bs.pdf = pdfv
                 bs.flags = (BXDF_DIFFUSE | BXDF_TRANSMISSION)
         return bs
 
     @ti.func
     def f(self, wo: vec3, wi: vec3, mode: ti.i32) -> vec3:
+        """
+        Computes the BSDF value for diffuse transmission given outgoing and incident directions.
+        Uses reflectance R if the directions are in the same hemisphere (reflection) and transmittance T otherwise (transmission).
+        
+        Args:
+            wo (vec3): Outgoing direction.
+            wi (vec3): Incident direction.
+            mode (ti.i32): Mode flag.
+        
+        Returns:
+            vec3: The computed BSDF value.
+        """
         fval = vec3(0)
         if same_hemisphere(wo, wi):
             fval = self.R * INV_PI
@@ -626,6 +408,19 @@ class DiffuseTransmissionBxDF:
 
     @ti.func
     def pdf(self, wo: vec3, wi: vec3, mode: ti.i32, sample_flags: ti.i32) -> ti.f32:
+        """
+        Computes the probability density function (PDF) for the diffuse transmission BSDF.
+        The PDF is weighted by the relative contributions of reflectance and transmittance based on the sampling branch.
+        
+        Args:
+            wo (vec3): Outgoing direction.
+            wi (vec3): Incident direction.
+            mode (ti.i32): Mode flag.
+            sample_flags (ti.i32): Flags indicating which scattering components are allowed.
+        
+        Returns:
+            ti.f32: The computed probability density.
+        """
         pdfv = 0.0
         refOk = (sample_flags & BXDF_REFLECTION) != 0
         traOk = (sample_flags & BXDF_TRANSMISSION) != 0
@@ -641,12 +436,18 @@ class DiffuseTransmissionBxDF:
 
     @ti.func
     def flags(self) -> ti.i32:
-
+        """
+        Returns the combined BxDF flags for diffuse transmission based on non-zero reflectance and transmittance values.
+        The flags indicate that the BSDF is diffuse and may support reflection and/or transmission.
+        
+        Returns:
+            ti.i32: The combined flags for the BxDF.
+        """
         flag_val = 0
         anyR = (self.R.max() > 0.0)
         anyT = (self.T.max() > 0.0)
         if anyR or anyT:
-            # always Diffuse
+            # Always mark as diffuse.
             flag_val |= BXDF_DIFFUSE
             if anyR:
                 flag_val |= BXDF_REFLECTION
@@ -656,15 +457,31 @@ class DiffuseTransmissionBxDF:
 
 
 
-
 @ti.dataclass
 class DielectricBxDF:
+    """
+    Represents the BSDF for a dielectric material, handling both reflection and transmission,
+    with separate branches for smooth (specular) and rough surfaces.
+    """
     eta: ti.f32         # index of refraction for the dielectric
     color: vec3         # tint (if any)
     mf_distrib: TrowbridgeReitzDistribution
 
     @ti.func
     def sample_f(self, wo: vec3, uc: ti.f32, u2: vec2, mode: ti.i32, sample_flags: ti.i32) -> BSDFSample:
+        """
+        Samples the BSDF to generate a BSDFSample for dielectric materials by choosing between smooth and rough branches based on the microfacet distribution.
+
+        Args:
+            wo (vec3): Outgoing direction.
+            uc (ti.f32): A random number used for branch selection.
+            u2 (vec2): A 2D random sample used for sampling.
+            mode (ti.i32): Mode flag (e.g., RADIANCE or IMPORTANCE).
+            sample_flags (ti.i32): Flags specifying which components to sample.
+
+        Returns:
+            BSDFSample: The sampled BSDF value.
+        """
         # Choose the smooth vs. rough branch based on the microfacet distribution.
         bs = BSDFSample(vec3(0.0), vec3(0.0), 0.0, 0, 1.0)
         if self.eta == 1.0 or self.mf_distrib.effectively_smooth():
@@ -675,6 +492,19 @@ class DielectricBxDF:
 
     @ti.func
     def alt_sample_f_Smooth(self, wo: vec3, uc: ti.f32, u2: vec2, mode: ti.i32, sample_flags: ti.i32) -> BSDFSample:
+        """
+        Handles the perfect specular case for smooth dielectric materials.
+
+        Args:
+            wo (vec3): Outgoing direction.
+            uc (ti.f32): A random number used for branch selection.
+            u2 (vec2): A 2D random sample used for sampling.
+            mode (ti.i32): Mode flag.
+            sample_flags (ti.i32): Flags specifying which components to sample.
+
+        Returns:
+            BSDFSample: The sampled BSDF value.
+        """
         # This is the perfect specular case.
         out = BSDFSample(vec3(0.0), vec3(0.0), 0.0, 0, 1.0)
         R = fr_dielectric(cos_theta(wo), self.eta)
@@ -734,6 +564,19 @@ class DielectricBxDF:
 
     @ti.func
     def sample_f_Smooth(self, wo, uc, u, mode, sample_flags):
+        """
+        Samples the smooth branch of the dielectric BSDF to generate a BSDFSample, computing reflection or refraction using Fresnel equations.
+
+        Args:
+            wo (vec3): Outgoing direction.
+            uc (ti.f32): A random number used for branch selection.
+            u: A random sample used for the sampling procedure.
+            mode (ti.i32): Mode flag (e.g., RADIANCE or IMPORTANCE).
+            sample_flags (ti.i32): Flags specifying which components to sample.
+
+        Returns:
+            BSDFSample: The sampled BSDF value.
+        """
         # Initialize output.
         bs = BSDFSample()
 
@@ -838,6 +681,20 @@ class DielectricBxDF:
 
     @ti.func
     def sample_f_Rough(self, wo: vec3, uc: ti.f32, u2: vec2, mode: ti.i32, sample_flags: ti.i32) -> BSDFSample:
+        """
+        Samples the rough branch of the dielectric BSDF by sampling a microfacet normal from the Trowbridge-Reitz distribution and computing the Fresnel terms.
+
+        Args:
+            wo (vec3): Outgoing direction.
+            uc (ti.f32): A random number used for branch selection.
+            u2 (vec2): A 2D random sample used for microfacet sampling.
+            mode (ti.i32): Mode flag.
+            sample_flags (ti.i32): Flags specifying which components to sample.
+
+        Returns:
+            BSDFSample: The sampled BSDF value.
+        """
+        # Initialize output.    
         out = BSDFSample(vec3(0.0), vec3(0.0), 0.0, 0, 1.0)
         # Sample a microfacet normal wm using the Trowbridge-Reitz distribution.
         wm = self.mf_distrib.Sample_wm(wo, u2)
@@ -899,7 +756,17 @@ class DielectricBxDF:
 
     @ti.func
     def f(self, wo: vec3, wi: vec3, mode: ti.i32) -> vec3:
+        """
+        Computes the BSDF value for a dielectric material given outgoing and incident directions.
 
+        Args:
+            wo (vec3): Outgoing direction.
+            wi (vec3): Incident direction.
+            mode (ti.i32): Mode flag (e.g., RADIANCE or IMPORTANCE).
+
+        Returns:
+            vec3: The computed BSDF value.
+        """
 
         fval = vec3(0.0)
         if not (self.eta == 1.0 or self.mf_distrib.effectively_smooth()):
@@ -934,6 +801,18 @@ class DielectricBxDF:
 
     @ti.func
     def pdf(self, wo: vec3, wi: vec3, mode: ti.i32, sample_flags: ti.i32) -> ti.f32:
+        """
+        Computes the probability density function (PDF) for sampling the dielectric BSDF given outgoing and incident directions.
+
+        Args:
+            wo (vec3): Outgoing direction.
+            wi (vec3): Incident direction.
+            mode (ti.i32): Mode flag.
+            sample_flags (ti.i32): Flags indicating which components are being sampled.
+
+        Returns:
+            ti.f32: The probability density of the sample.
+        """
         pdfv = 0.0
         if self.eta == 1.0 or self.mf_distrib.effectively_smooth():
             pdfv = 0.0
@@ -976,6 +855,12 @@ class DielectricBxDF:
 
     @ti.func
     def flags(self) -> ti.i32:
+        """
+        Returns the BxDF flags for the dielectric BSDF based on its reflection and transmission properties.
+
+        Returns:
+            ti.i32: The BxDF flag value for the dielectric material.
+        """
         flag_val = 0
         # If η == 1, then use only transmission; otherwise reflection + transmission.
         if self.eta == 1.0:
@@ -995,6 +880,9 @@ class DielectricBxDF:
 
 @ti.dataclass
 class ConductorBxDF:
+    """
+    Represents the BSDF for a conductor (metal), utilizing complex Fresnel calculations.
+    """
     eta: vec3
     k:   vec3
     mf_distrib: TrowbridgeReitzDistribution
@@ -1002,6 +890,19 @@ class ConductorBxDF:
 
     @ti.func
     def sample_f(self, wo: vec3, uc: ti.f32, u2: vec2, mode: ti.i32, sample_flags: ti.i32) -> BSDFSample:
+        """
+        Samples the BSDF to generate a BSDFSample for conductor materials using either smooth (perfect mirror) or rough microfacet reflection.
+        
+        Args:
+            wo (vec3): Outgoing direction.
+            uc (ti.f32): A random number used for branch selection.
+            u2 (vec2): A 2D random sample for microfacet normal sampling.
+            mode (ti.i32): Mode flag (e.g., RADIANCE or IMPORTANCE).
+            sample_flags (ti.i32): Flags specifying which components to sample (e.g., reflection).
+        
+        Returns:
+            BSDFSample: The sampled BSDF value including spectral value, incident direction, PDF, and flags.
+        """
         bs = BSDFSample(vec3(0.0), vec3(0.0), 0.0, 0, 1.0)
         # Only reflection for conductors.
         if (sample_flags & BXDF_REFLECTION) != 0:
@@ -1046,6 +947,17 @@ class ConductorBxDF:
 
     @ti.func
     def f(self, wo: vec3, wi: vec3, mode: ti.i32) -> vec3:
+        """
+        Computes the BSDF value for a conductor given outgoing and incident directions.
+        
+        Args:
+            wo (vec3): Outgoing direction.
+            wi (vec3): Incident direction.
+            mode (ti.i32): Mode flag (e.g., RADIANCE or IMPORTANCE).
+        
+        Returns:
+            vec3: The computed BSDF value.
+        """
         fval = vec3(0.0)
         if same_hemisphere(wo, wi) and not self.mf_distrib.effectively_smooth():
             cos_o = abs_cos_theta(wo)
@@ -1065,6 +977,18 @@ class ConductorBxDF:
 
     @ti.func
     def pdf(self, wo: vec3, wi: vec3, mode: ti.i32, sample_flags: ti.i32) -> ti.f32:
+        """
+        Computes the probability density function (PDF) for the conductor BSDF given outgoing and incident directions.
+        
+        Args:
+            wo (vec3): Outgoing direction.
+            wi (vec3): Incident direction.
+            mode (ti.i32): Mode flag.
+            sample_flags (ti.i32): Flags indicating which components are being sampled.
+        
+        Returns:
+            ti.f32: The probability density of the sample.
+        """
         pdfv = 0.0
         if (sample_flags & BXDF_REFLECTION) != 0 and same_hemisphere(wo, wi):
             if not self.mf_distrib.effectively_smooth():
@@ -1079,6 +1003,12 @@ class ConductorBxDF:
 
     @ti.func
     def flags(self) -> ti.i32:
+        """
+        Returns the BxDF flags for the conductor BSDF based on its microfacet roughness and reflection properties.
+        
+        Returns:
+            ti.i32: A flag indicating whether the BSDF is specular or glossy, combined with reflection.
+        """
         flag_val = 0
 
         if self.mf_distrib.effectively_smooth():
@@ -1092,8 +1022,10 @@ class ConductorBxDF:
 
 @ti.dataclass
 class BSDF:
-
-
+    """
+    Represents a complete BSDF, encapsulating multiple BxDF components (diffuse, diffuse transmission,
+    dielectric, conductor) along with a local coordinate frame for transforming between world and local space.
+    """
     type: ti.i32
 
     diffuse: DiffuseBxDF
@@ -1105,29 +1037,77 @@ class BSDF:
 
     @ti.func
     def to_local(self, v: vec3) -> vec3:
+        """
+        Transforms a world-space vector to the local BSDF coordinate frame.
+        
+        Args:
+            v (vec3): The world-space vector.
+        
+        Returns:
+            vec3: The vector in the local coordinate frame.
+        """
         return self.frame.to_local(v)
 
     @ti.func
     def from_local(self, v: vec3) -> vec3:
+        """
+        Transforms a vector from the local BSDF coordinate frame to world-space.
+        
+        Args:
+            v (vec3): The local-space vector.
+        
+        Returns:
+            vec3: The vector in world-space.
+        """
         return self.frame.from_local(v)
 
     @ti.func
     def init_frame(self, normal):
+        """
+        Initializes the BSDF's local coordinate frame using the given surface normal.
+        
+        Args:
+            normal: The surface normal used to initialize the coordinate frame.
+        """
         self.frame = frame_from_z(normal)
 
     @ti.func
     def add_diffuse(self, R):
+        """
+        Sets the diffuse component of the BSDF with reflectance R and sets the BSDF type to diffuse.
+        
+        Args:
+            R: The reflectance (vec3) for the diffuse component.
+        """
         self.diffuse.R = R
         self.type = 0
 
     @ti.func
     def add_transmission(self, R, T):
+        """
+        Sets the diffuse transmission component of the BSDF with reflectance R and transmittance T,
+        and sets the BSDF type to transmission.
+        
+        Args:
+            R: The reflectance (vec3) for the transmission component.
+            T: The transmittance (vec3) for the transmission component.
+        """
         self.diffuse_transmission.R = R
         self.diffuse_transmission.T = T
         self.type = 1
 
     @ti.func
     def add_dielectric(self, eta, color, uroughness, vroughness):
+        """
+        Sets the dielectric component of the BSDF with the given eta, color, and roughness values,
+        initializes the microfacet distribution, and sets the BSDF type to dielectric.
+        
+        Args:
+            eta: The index of refraction.
+            color: The tint (vec3).
+            uroughness: The roughness value along the u direction.
+            vroughness: The roughness value along the v direction.
+        """
         # print(eta, color, uroughness, vroughness)
         self.dielectric.eta = eta
         self.dielectric.color = color
@@ -1139,6 +1119,16 @@ class BSDF:
 
     @ti.func
     def add_conductor(self, eta, k, uroughness, vroughness):
+        """
+        Sets the conductor component of the BSDF with the given eta, k, and roughness values,
+        initializes the microfacet distribution, and sets the BSDF type to conductor.
+        
+        Args:
+            eta: The refractive index (vec3) for the conductor.
+            k: The extinction coefficient (vec3) for the conductor.
+            uroughness: The roughness value along the u direction.
+            vroughness: The roughness value along the v direction.
+        """
         # print("Adding conductor", eta, k, uroughness, vroughness)
         self.conductor.eta = eta
         self.conductor.k = k
@@ -1149,6 +1139,17 @@ class BSDF:
 
     @ti.func
     def f(self, wo_world, wi_world, mode=1):
+        """
+        Evaluates the BSDF function for given world-space outgoing and incident directions and a specified mode.
+        
+        Args:
+            wo_world: The outgoing direction in world-space.
+            wi_world: The incident direction in world-space.
+            mode (optional): The transport mode (default is 1).
+        
+        Returns:
+            vec3: The evaluated BSDF value.
+        """
         wo = self.to_local(wo_world)
         wi = self.to_local(wi_world)
         result = vec3(0.0)
@@ -1165,6 +1166,19 @@ class BSDF:
 
     @ti.func
     def sample_f(self, wo_world, u, u2, mode=1, sample_flags=BXDF_ALL):
+        """
+        Samples the BSDF to generate a BSDFSample, transforming the sampled direction from local to world-space.
+        
+        Args:
+            wo_world: The outgoing direction in world-space.
+            u: A random number used for sampling.
+            u2: A 2D random sample used for hemisphere sampling.
+            mode (optional): The transport mode (default is 1).
+            sample_flags (optional): Flags specifying which components to sample (default is BXDF_ALL).
+        
+        Returns:
+            BSDFSample: The sampled BSDF value.
+        """
         bs = BSDFSample()
         bxdf_sample = bs
 
@@ -1197,6 +1211,19 @@ class BSDF:
 
     @ti.func
     def pdf(self, wo_world, wi_world, mode=1, sample_flags=BXDF_ALL):
+        """
+        Computes the probability density function (PDF) for sampling the BSDF given world-space outgoing
+        and incident directions.
+        
+        Args:
+            wo_world: The outgoing direction in world-space.
+            wi_world: The incident direction in world-space.
+            mode (optional): The transport mode (default is 1).
+            sample_flags (optional): Flags specifying which components are considered (default is BXDF_ALL).
+        
+        Returns:
+            ti.f32: The computed PDF value.
+        """
         wo = self.to_local(wo_world)
         wi = self.to_local(wi_world)
         result = 0.0
@@ -1213,6 +1240,12 @@ class BSDF:
 
     @ti.func
     def flags(self):
+        """
+        Returns the BxDF flags for the current BSDF based on the selected component type.
+        
+        Returns:
+            ti.i32: The BxDF flag value.
+        """
         flag = BXDF_NONE
         if self.type == 0:
             flag = self.diffuse.flags()

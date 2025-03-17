@@ -1,8 +1,10 @@
-import enum
 
 import taichi as ti
+from taichi.math import pi
 
 # Constants
+PI     = pi
+INV_PI = 1.0 / PI
 inv_pi = 1.0 / ti.math.pi
 inv_2_pi = 0.5 * inv_pi
 inv_4_pi = 0.25 * inv_pi

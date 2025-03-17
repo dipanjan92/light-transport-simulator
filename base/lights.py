@@ -11,7 +11,7 @@ from base.samplers import cosine_hemisphere_pdf, sample_cosine_hemisphere, sampl
 from primitives.primitives import Triangle, Primitive
 from primitives.ray import Ray
 from utils.constants import INF
-from utils.misc import length_squared, max_component
+from utils.vecmath import length_squared, max_component
 
 
 @ti.dataclass

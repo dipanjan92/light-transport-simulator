@@ -99,54 +99,6 @@ def fr_dielectric(cos_theta_i, eta):
 
 
 @ti.func
-def fresnel(cos_theta_i, eta):
-    # Initialize output variables
-    r = 0.0
-    cos_theta_t = 0.0
-    eta_it = 0.0
-    eta_ti = 0.0
-
-    # Check if the ray is entering or exiting the surface
-    outside_mask = cos_theta_i >= 0.0
-
-    rcp_eta = 1.0 / eta
-    eta_it = eta if outside_mask else rcp_eta
-    eta_ti = rcp_eta if outside_mask else eta
-
-    # Calculate the squared sine of the transmitted angle using Snell's law
-    sin2_theta_t = eta_ti * eta_ti * (1.0 - cos_theta_i * cos_theta_i)
-    cos_theta_t_sqr = 1.0 - sin2_theta_t
-
-    # Absolute cosines of the incident and transmitted rays
-    cos_theta_i_abs = ti.abs(cos_theta_i)
-    cos_theta_t_abs = ti.sqrt(ti.max(0.0, cos_theta_t_sqr))
-
-    # Handle special cases where the index is matched or cos_theta_i is zero
-    index_matched = eta == 1.0
-    special_case = index_matched or (cos_theta_i_abs == 0.0)
-
-    r_sc = 0.0 if index_matched else 1.0
-
-    # Calculate the reflection coefficients
-    a_s = (eta_it * cos_theta_t_abs - cos_theta_i_abs) / (eta_it * cos_theta_t_abs + cos_theta_i_abs)
-    a_p = (eta_it * cos_theta_i_abs - cos_theta_t_abs) / (eta_it * cos_theta_i_abs + cos_theta_t_abs)
-
-    r = 0.5 * (a_s * a_s + a_p * a_p)
-
-    # Apply the special case handling
-    if special_case:
-        r = r_sc
-
-    # Adjust the sign of the transmitted direction
-    if cos_theta_i < 0:
-        cos_theta_t = -cos_theta_t_abs
-    else:
-        cos_theta_t = cos_theta_t_abs
-
-    return r, cos_theta_t, eta_it, eta_ti
-
-
-@ti.func
 def reflect(wo, n):
     return -wo + 2 * dot(wo, n) * n
 
@@ -266,14 +218,6 @@ def distance_squared(u, v):
 @ti.func
 def spherical_triangle_area(a, b, c):
     return ti.abs(2 * atan2(dot(a, cross(b, c)), 1 + dot(a, b) + dot(a, c) + dot(b, c)))
-
-
-@ti.func
-def max_component(vec):
-    max_val = vec[0]
-    for i in range(1, vec.n):
-        max_val = max(max_val, vec[i])
-    return max_val
 
 
 @ti.func
