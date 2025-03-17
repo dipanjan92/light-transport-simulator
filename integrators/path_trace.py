@@ -1,3 +1,9 @@
+"""
+This module implements a path tracing integrator for light transport simulation.
+It calculates radiance along a ray by recursively tracing paths through the scene,
+sampling BSDF and direct lighting contributions, and incorporating Russian roulette termination.
+"""
+
 import taichi as ti
 from taichi.math import vec3, vec2, dot, max, isinf
 

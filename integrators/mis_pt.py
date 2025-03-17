@@ -1,3 +1,9 @@
+"""
+This module implements a MIS-based path tracing integrator for light transport simulation.
+It combines Multiple Importance Sampling (MIS) with BSDF and direct light sampling to compute
+radiance along a ray. The integrator handles both specular and non-specular interactions
+and incorporates Russian roulette for termination.
+"""
 import taichi as ti
 from taichi.math import vec3, vec2, dot, max, isinf
 
