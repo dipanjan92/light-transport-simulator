@@ -166,4 +166,4 @@ objects/bmw
 .DS_Store
 
 # VS Code workspace file
-LightTransportSimulator.code-workspace
+*.code-workspace
