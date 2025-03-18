@@ -120,6 +120,10 @@ ENV/
 env.bak/
 venv.bak/
 
+# Conda environments
+.conda/
+conda-meta/
+
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -157,3 +161,9 @@ tests/others
 utils/bkp.py
 objects/erato
 objects/bmw
+
+# macOS system files
+.DS_Store
+
+# VS Code workspace file
+LightTransportSimulator.code-workspace
